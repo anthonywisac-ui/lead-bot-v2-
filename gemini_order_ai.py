@@ -7,12 +7,12 @@ import os
 import json
 import asyncio
 from typing import Dict, List, Optional
-import google.generativeai as genai
+from google import genai
 from menus_multi import get_menu, format_price
 from country_selector import COUNTRIES
 
 # Initialize Gemini Client
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 MODEL = "gemini-2.0-flash"  # Fast model for quick responses (gemini-2.5-flash deprecated)
 
 # ========================================
@@ -107,10 +107,10 @@ Estimated prep time: 20-25 minutes
 """
 
         # Call Gemini
-        model = genai.GenerativeModel(MODEL)
         response = await asyncio.to_thread(
-            model.generate_content,
-            f"{SYSTEM_PROMPTS['order_summary']}\n\n{context}"
+            client.models.generate_content,
+            model=MODEL,
+            contents=f"{SYSTEM_PROMPTS['order_summary']}\n\n{context}"
         )
 
         summary = response.text.strip()
