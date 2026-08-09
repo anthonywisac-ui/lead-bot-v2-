@@ -253,10 +253,21 @@ async def show_welcome(sender, country_code):
 
     sections = [{"title": "🍽️ SELECT CATEGORY", "rows": rows}]
 
+    help_text = """📍 {country} | {currency}
+
+Commands:
+'owner' - Change location
+'client' - B2B Business Account
+'new' - New Customer
+'hi/hello' - Returning Customer""".format(
+        country=country_info['name'],
+        currency=country_info['currency']
+    )
+
     await send_interactive_list(
         sender,
         header_text="👋 Wild Bites Restaurant",
-        body_text=f"📍 {country_info['name']} | {country_info['currency']}\n\nType 'owner' to change location",
+        body_text=help_text,
         sections=sections
     )
 
@@ -362,8 +373,11 @@ async def show_cart_with_total(sender, country_code, cart, menu):
         buttons=buttons
     )
 
-async def send_to_manager(sender, country_code, cart, menu, address, delivery_type, payment_method):
+async def send_to_manager(sender, country_code, cart, menu, address, delivery_type, payment_method, custom_manager=None):
     """Send order to manager for approval"""
+    # Use custom manager number if provided (for client accounts), otherwise use default
+    manager_number = custom_manager or MANAGER_NUMBER
+
     # Create order in order_manager
     order_id, total = create_order(sender, country_code, cart, menu, address, delivery_type, payment_method)
 
@@ -407,7 +421,7 @@ Subtotal: {format_price(country_code, subtotal)}
 📋 TOTAL TIME: {'7 min' if delivery_type == 'home' else '5 min'}
 """
 
-    await send_text_message(MANAGER_NUMBER, bill_text)
+    await send_text_message(manager_number, bill_text)
 
     # Manager buttons
     buttons = [
@@ -415,7 +429,7 @@ Subtotal: {format_price(country_code, subtotal)}
         {"id": f"reject_{sender}", "title": "❌ Reject"}
     ]
     await send_interactive_buttons(
-        MANAGER_NUMBER,
+        manager_number,
         header_text="MANAGER ACTION NEEDED",
         body_text=f"Customer: {sender}",
         buttons=buttons
@@ -434,11 +448,88 @@ async def handle_smart_flow(sender, text_or_id, is_interactive=False):
             "stage": "greeting",
             "last_order": None,
             "order_timestamp": None,
+            "customer_name": None,
+            "customer_type": None,  # "client", "new", "returning"
+            "manager_number": MANAGER_NUMBER,  # Default manager, can be overridden
         }
 
     session = customer_sessions[sender]
     country_code = session.get("country_code")
     menu = get_menu(country_code) if country_code else None
+
+    # ========== SHORTCODE: CLIENT (B2B) ==========
+    if text_or_id.lower() in ["client"] and not is_interactive and session.get("stage") == "greeting":
+        session["customer_type"] = "client"
+        session["stage"] = "get_manager_number"
+        customer_sessions[sender] = session
+
+        msg = """👔 BUSINESS CLIENT SETUP
+
+Please provide your manager/business number where you'd like to receive orders:
+
+Format: +923xxxxxxxxx or 03xxxxxxxxx"""
+        await send_text_message(sender, msg)
+        return
+
+    # Handle manager number input for client
+    if session.get("stage") == "get_manager_number" and not is_interactive:
+        manager_num = text_or_id.strip()
+        if len(manager_num) < 10:
+            await send_text_message(sender, "❌ Invalid number. Please provide a valid phone number.\n\nFormat: +923xxxxxxxxx or 03xxxxxxxxx")
+            return
+
+        session["manager_number"] = manager_num
+        session["stage"] = "greeting"
+        customer_sessions[sender] = session
+
+        await send_text_message(sender, f"✅ Manager number saved: {manager_num}\n\nNow let's set up your menu! 📋")
+
+        # Auto-detect country
+        detected = get_country_from_phone(sender)
+        session["country_code"] = detected
+        session["stage"] = "browsing"
+        customer_sessions[sender] = session
+        await show_welcome(sender, detected)
+        return
+
+    # ========== SHORTCODE: NEW ==========
+    if text_or_id.lower() in ["new"] and not is_interactive and session.get("stage") == "greeting":
+        session["customer_type"] = "new"
+        session["cart"] = {}
+        customer_sessions[sender] = session
+
+        # Auto-detect country
+        detected = get_country_from_phone(sender)
+        session["country_code"] = detected
+        session["stage"] = "browsing"
+        customer_sessions[sender] = session
+        await show_welcome(sender, detected)
+        return
+
+    # ========== SHORTCODE: HI/HELLO/SALAM (RETURNING CUSTOMER) ==========
+    if text_or_id.lower() in ["hi", "hello", "salam", "assalam", "assalamu alaikum"] and not is_interactive and session.get("stage") == "greeting":
+        session["customer_type"] = "returning"
+        customer_sessions[sender] = session
+
+        # Auto-detect country
+        detected = get_country_from_phone(sender)
+        session["country_code"] = detected
+        customer_sessions[sender] = session
+
+        # Check if returning customer
+        last_order = get_customer_last_order(sender)
+        if last_order:
+            # Show returning customer options
+            session["stage"] = "browsing"
+            customer_sessions[sender] = session
+            await show_returning_customer_options(sender, detected)
+            return
+        else:
+            # New customer using "hi"
+            session["stage"] = "browsing"
+            customer_sessions[sender] = session
+            await show_welcome(sender, detected)
+            return
 
     # ========== STAGE 1: RETURNING CUSTOMER CHECK ==========
     if session.get("stage") == "greeting" and not is_interactive and not session.get("phone_collected"):
@@ -477,7 +568,7 @@ async def handle_smart_flow(sender, text_or_id, is_interactive=False):
         session["stage"] = "payment_selection"
         customer_sessions[sender] = session
 
-        # Send to manager
+        # Send to manager (use custom manager number if client)
         total = await send_to_manager(
             sender,
             country_code,
@@ -485,7 +576,8 @@ async def handle_smart_flow(sender, text_or_id, is_interactive=False):
             menu,
             address,
             session.get("delivery_type", "home"),
-            "Pending"
+            "Pending",
+            session.get("manager_number")
         )
 
         await send_text_message(sender, f"📤 Order sent to manager...\n⏱️ Expected time: 7 minutes\n\n💰 Total: {format_price(country_code, total)}")
@@ -733,8 +825,8 @@ House B-32, Block 4, Gulshan-e-Iqbal, near Mosque"""
                 await send_text_message(sender, msg)
                 return
 
-            # Send to manager
-            await send_to_manager(sender, country_code, session["cart"], menu, "Pickup", "pickup", "Pending")
+            # Send to manager (use custom manager number if client)
+            await send_to_manager(sender, country_code, session["cart"], menu, "Pickup", "pickup", "Pending", session.get("manager_number"))
 
             await send_text_message(sender, f"📤 Order sent to manager...\n⏱️ Expected time: 5 minutes (pickup, no delivery)")
             return
