@@ -10,6 +10,7 @@ load_dotenv()
 
 from config import VERIFY_TOKEN
 from flow_smart import handle_smart_flow
+from order_manager import handle_manager_approval
 
 app = FastAPI()
 
@@ -64,7 +65,16 @@ async def handle_webhook(request: Request):
                     button_id = button_reply.get("id")
                     print(f"   Button: {button_id}")
                     if button_id:
-                        await handle_smart_flow(sender, button_id, is_interactive=True)
+                        # Handle manager actions
+                        if button_id.startswith("approve_"):
+                            customer = button_id.replace("approve_", "")
+                            await handle_manager_approval(sender, "approve", customer)
+                        elif button_id.startswith("reject_"):
+                            customer = button_id.replace("reject_", "")
+                            await handle_manager_approval(sender, "reject", customer)
+                        else:
+                            # Regular customer flow
+                            await handle_smart_flow(sender, button_id, is_interactive=True)
 
                 elif list_reply:
                     item_id = list_reply.get("id")

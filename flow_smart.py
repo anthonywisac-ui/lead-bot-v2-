@@ -7,6 +7,7 @@ from country_selector import COUNTRIES
 from whatsapp_interactive import send_interactive_buttons, send_interactive_list, send_text_message
 from gemini_ai import get_ai_response
 from db import customer_sessions
+from order_manager import create_order, MANAGER_NUMBER
 
 DELIVERY_SETTINGS = {
     "PK": {"min_delivery": 500, "min_pickup": 200, "delivery_fee": 150, "free_above": 2000},
@@ -225,7 +226,10 @@ async def show_cart_with_total(sender, country_code, cart, menu):
 
 async def send_to_manager(sender, country_code, cart, menu, address, delivery_type, payment_method):
     """Send order to manager for approval"""
-    # Calculate totals
+    # Create order in order_manager
+    order_id, total = create_order(sender, country_code, cart, menu, address, delivery_type, payment_method)
+
+    # Build order bill
     subtotal = sum(
         menu["categories"][cat_key]["items"].get(item_id, {}).get("price", 0) * qty
         for item_id, qty in cart.items()
@@ -234,12 +238,11 @@ async def send_to_manager(sender, country_code, cart, menu, address, delivery_ty
     )
 
     delivery_charge = get_delivery_charge(country_code, subtotal) if delivery_type == "home" else 0
-    final_total = subtotal + delivery_charge
 
-    # Build order bill
-    bill_text = f"""🆕 NEW ORDER - {COUNTRIES[country_code]['name']}
+    bill_text = f"""🆕 NEW ORDER - {order_id}
 
 📱 Customer: {sender}
+📍 Country: {COUNTRIES[country_code]['name']}
 
 📊 ITEMS:
 """
@@ -255,15 +258,15 @@ async def send_to_manager(sender, country_code, cart, menu, address, delivery_ty
 Subtotal: {format_price(country_code, subtotal)}
 🚚 Delivery: {format_price(country_code, delivery_charge) if delivery_charge > 0 else 'FREE'}
 ───────────────────
-💵 TOTAL: {format_price(country_code, final_total)}
+💵 TOTAL: {format_price(country_code, total)}
 
-📍 Address: {address}
+📍 Address: {address if delivery_type == 'home' else 'Pickup from Restaurant'}
 🚗 Type: {'Home Delivery' if delivery_type == 'home' else 'Pickup'}
 💳 Payment: {payment_method}
 
 ⏱️ Prep Time: 5 min
-🚚 Delivery: 2 min
-📋 TOTAL TIME: 7 min
+🚚 Delivery: {'2 min' if delivery_type == 'home' else '0 min'}
+📋 TOTAL TIME: {'7 min' if delivery_type == 'home' else '5 min'}
 """
 
     await send_text_message(MANAGER_NUMBER, bill_text)
@@ -280,7 +283,7 @@ Subtotal: {format_price(country_code, subtotal)}
         buttons=buttons
     )
 
-    return final_total
+    return total
 
 async def handle_smart_flow(sender, text_or_id, is_interactive=False):
     """Main flow handler"""
