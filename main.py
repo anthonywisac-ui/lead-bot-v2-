@@ -25,17 +25,17 @@ app = FastAPI()
 # ==================== DATA STORES ====================
 user_sessions = {}  # Store user state: {phone: {service_id, stage, order, ...}}
 saved_orders = {}   # Store completed orders
-menu_data = {
-    "pizza": [
-        {"name": "Margherita", "price": 500, "desc": "Classic cheese pizza"},
-        {"name": "Pepperoni", "price": 600, "desc": "Loaded with pepperoni"},
-        {"name": "Veggie", "price": 550, "desc": "Fresh vegetables"},
-    ],
-    "burger": [
-        {"name": "Burger Classic", "price": 400, "desc": "Beef burger"},
-        {"name": "Chicken Burger", "price": 350, "desc": "Crispy chicken"},
-    ]
-}
+
+# Load menu from menu.json
+def load_menu():
+    try:
+        with open("menu.json", "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"Error loading menu.json: {e}")
+        return {}
+
+menu_data = load_menu()
 
 # ==================== WEBHOOK SETUP ====================
 @app.get("/webhook")
@@ -108,8 +108,11 @@ async def process_user_message(phone_number: str, text: str):
 
             if ai_response["service_id"] == 1:
                 session["stage"] = "restaurant_greeting"
-                await send_message(phone_number,
-                    "🍔 Welcome to Restaurant!\n\nWhat would you like?\n\n1️⃣ View Pizza Menu\n2️⃣ View Burger Menu\n3️⃣ View Cart\n4️⃣ Checkout")
+                msg = "🍔 Welcome to Restaurant!\n\n👇 Select a category:\n\n"
+                for idx, (cat_id, cat_info) in enumerate(menu_data.items(), 1):
+                    msg += f"{idx}️⃣ {cat_info['name']}\n"
+                msg += f"\nReply with number (1-{len(menu_data)})"
+                await send_message(phone_number, msg)
 
         # Show options if needed
         elif ai_response.get("show_options"):
@@ -127,67 +130,72 @@ async def process_user_message(phone_number: str, text: str):
 
 # ==================== RESTAURANT FLOW ====================
 async def handle_restaurant_flow(phone_number: str, user_input: str, session: dict):
-    """Handle restaurant ordering flow"""
+    """Handle restaurant ordering flow with full menu"""
 
-    stage = session.get("stage", "greeting")
     user_input = user_input.strip().lower()
+    categories = list(menu_data.keys())
 
-    # Menu selection
-    if user_input == "1":
-        msg = "🍕 *PIZZA MENU*\n\n"
-        for idx, item in enumerate(menu_data["pizza"], 1):
-            msg += f"{idx}️⃣ {item['name']} - Rs{item['price']}\n   {item['desc']}\n\n"
-        msg += "Reply with number (1-3) to add to cart"
+    # Show category menu
+    if user_input in ["menu", "start"]:
+        msg = "🍽️ *SELECT CATEGORY*\n\n"
+        for idx, (cat_id, cat_info) in enumerate(menu_data.items(), 1):
+            msg += f"{idx}️⃣ {cat_info['name']}\n"
+        msg += f"\nReply with number (1-{len(categories)})"
         await send_message(phone_number, msg)
-        session["menu_type"] = "pizza"
 
-    elif user_input == "2":
-        msg = "🍔 *BURGER MENU*\n\n"
-        for idx, item in enumerate(menu_data["burger"], 1):
-            msg += f"{idx}️⃣ {item['name']} - Rs{item['price']}\n   {item['desc']}\n\n"
-        msg += "Reply with number (1-2) to add to cart"
-        await send_message(phone_number, msg)
-        session["menu_type"] = "burger"
+    # Category selection (1-8)
+    elif user_input.isdigit():
+        cat_idx = int(user_input) - 1
+        if 0 <= cat_idx < len(categories):
+            category = categories[cat_idx]
+            cat_info = menu_data[category]
+            items = list(cat_info['items'].items())
 
-    # Add to cart
-    elif user_input in ["1", "2", "3"]:
-        menu_type = session.get("menu_type")
-        if menu_type and menu_type in menu_data:
-            idx = int(user_input) - 1
-            if idx < len(menu_data[menu_type]):
-                item = menu_data[menu_type][idx]
-                session["cart"].append(item)
-                await send_message(phone_number,
-                    f"✅ Added {item['name']} to cart!\n\n1️⃣ Add more\n2️⃣ View cart\n3️⃣ Checkout")
+            msg = f"{cat_info['name']}\n\n"
+            for idx, (item_id, item_data) in enumerate(items, 1):
+                msg += f"{idx}️⃣ {item_data['emoji']} {item_data['name']} - ${item_data['price']}\n"
+            msg += f"\nReply with number to add to cart"
+
+            await send_message(phone_number, msg)
+            session["current_category"] = category
+            session["current_items"] = items
+
+        elif user_input == "0":  # View cart shortcut
+            await show_cart(phone_number, session)
+        else:
+            await send_message(phone_number, f"Invalid choice. Please reply 1-{len(categories)}")
+
+    # Add item to cart
+    elif user_input.isdigit() and session.get("current_items"):
+        item_idx = int(user_input) - 1
+        current_items = session.get("current_items", [])
+
+        if 0 <= item_idx < len(current_items):
+            item_id, item_data = current_items[item_idx]
+            item_to_add = {
+                "id": item_id,
+                "name": item_data['name'],
+                "price": item_data['price'],
+                "emoji": item_data['emoji']
+            }
+            session["cart"].append(item_to_add)
+            await send_message(phone_number,
+                f"✅ Added {item_data['emoji']} {item_data['name']} to cart!\n\n1️⃣ Add more items\n2️⃣ View cart\n3️⃣ Checkout")
 
     # View cart
-    elif user_input == "3":
-        if session["cart"]:
-            msg = "🛒 *YOUR CART*\n\n"
-            total = 0
-            for idx, item in enumerate(session["cart"], 1):
-                msg += f"{idx}. {item['name']} - Rs{item['price']}\n"
-                total += item['price']
-            msg += f"\n*Total: Rs{total}*\n\n1️⃣ Add more\n2️⃣ Checkout\n3️⃣ Clear cart"
-            session["total"] = total
-            await send_message(phone_number, msg)
-        else:
-            await send_message(phone_number, "Your cart is empty!\n\n1️⃣ View Pizza Menu\n2️⃣ View Burger Menu")
+    elif user_input == "2":
+        await show_cart(phone_number, session)
 
     # Checkout
-    elif user_input == "4" or user_input == "2":
+    elif user_input == "3":
         if session["cart"]:
-            total = session.get("total", sum(item['price'] for item in session["cart"]))
+            total = sum(item['price'] for item in session["cart"])
+            session["total"] = total
             session["stage"] = "checkout"
             await send_message(phone_number,
-                f"📦 *ORDER SUMMARY*\n\nTotal: Rs{total}\n\n1️⃣ Cash on Delivery\n2️⃣ Card Payment\n3️⃣ Cancel Order")
+                f"📦 *ORDER SUMMARY*\n\nTotal: ${total:.2f}\n\n1️⃣ Cash on Delivery\n2️⃣ Card Payment\n3️⃣ Cancel Order")
         else:
-            await send_message(phone_number, "Your cart is empty!")
-
-    # Clear cart
-    elif user_input == "3" and stage == "checkout":
-        session["cart"] = []
-        await send_message(phone_number, "Cart cleared!\n\n1️⃣ View Pizza Menu\n2️⃣ View Burger Menu")
+            await send_message(phone_number, "Your cart is empty! Add items first.")
 
     # COD
     elif user_input == "1" and session.get("stage") == "checkout":
@@ -199,17 +207,18 @@ async def handle_restaurant_flow(phone_number: str, user_input: str, session: di
             "payment": "cod",
             "status": "pending"
         }
-        session["cart"] = []
-        session["stage"] = "complete"
 
         # Notify manager
-        manager_msg = f"📦 NEW ORDER #{order_id}\n\nCustomer: {phone_number}\nTotal: Rs{session.get('total', 0)}\n\nItems:\n"
-        for item in saved_orders[order_id]["items"]:
-            manager_msg += f"• {item['name']} - Rs{item['price']}\n"
+        manager_msg = f"📦 NEW ORDER #{order_id}\n\n👤 Customer: {phone_number}\n💰 Total: ${session.get('total', 0):.2f}\n\n📋 Items:\n"
+        for item in session["cart"]:
+            manager_msg += f"• {item['emoji']} {item['name']} - ${item['price']:.2f}\n"
 
         await send_message(MANAGER_NUMBER, manager_msg)
         await send_message(phone_number,
-            f"✅ Order confirmed!\n\nOrder ID: #{order_id}\nTotal: Rs{session.get('total', 0)}\n\nThank you! 🙏")
+            f"✅ Order confirmed!\n\n🎟️ Order ID: #{order_id}\n💰 Total: ${session.get('total', 0):.2f}\n\nThank you! 🙏")
+
+        session["cart"] = []
+        session["stage"] = "complete"
 
     # Card payment
     elif user_input == "2" and session.get("stage") == "checkout":
@@ -218,11 +227,26 @@ async def handle_restaurant_flow(phone_number: str, user_input: str, session: di
     # Cancel
     elif user_input == "3" and session.get("stage") == "checkout":
         session["cart"] = []
-        session["stage"] = "greeting"
-        await send_message(phone_number, "Order cancelled.\n\n1️⃣ View Pizza Menu\n2️⃣ View Burger Menu\n3️⃣ Exit")
+        session["stage"] = "restaurant_greeting"
+        await send_message(phone_number, "❌ Order cancelled.\n\n1️⃣ View menu\n2️⃣ Exit")
 
     else:
-        await send_message(phone_number, "I didn't understand. Please try again or reply with a number.")
+        await send_message(phone_number, "Please reply with a number from the menu.")
+
+
+async def show_cart(phone_number: str, session: dict):
+    """Show current cart"""
+    if session["cart"]:
+        msg = "🛒 *YOUR CART*\n\n"
+        total = 0
+        for idx, item in enumerate(session["cart"], 1):
+            msg += f"{idx}. {item['emoji']} {item['name']} - ${item['price']:.2f}\n"
+            total += item['price']
+        session["total"] = total
+        msg += f"\n*Total: ${total:.2f}*\n\n1️⃣ Add more items\n2️⃣ Clear cart\n3️⃣ Checkout"
+        await send_message(phone_number, msg)
+    else:
+        await send_message(phone_number, "Your cart is empty! 📪\n\nType 'menu' to start ordering.")
 
 
 # ==================== SEND MESSAGE ====================
