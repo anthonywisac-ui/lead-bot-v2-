@@ -262,7 +262,7 @@ async def show_welcome(sender, country_code):
     categories = list(menu["categories"].items())
 
     # Send welcome image
-    await send_image_with_caption(sender, WELCOME_IMAGE, "Welcome to Wild Bites! 🍽️")
+    await send_image_with_caption(sender, WELCOME_IMAGE, "")
 
     rows = [
         {
@@ -275,21 +275,12 @@ async def show_welcome(sender, country_code):
 
     sections = [{"title": "🍽️ SELECT CATEGORY", "rows": rows}]
 
-    help_text = """📍 {country} | {currency}
-
-Commands:
-'owner' - Change location
-'client' - B2B Business Account
-'new' - New Customer
-'hi/hello' - Returning Customer""".format(
-        country=country_info['name'],
-        currency=country_info['currency']
-    )
+    body_text = f"📍 {country_info['name']} | {country_info['currency']}"
 
     await send_interactive_list(
         sender,
-        header_text="👋 Wild Bites Restaurant",
-        body_text=help_text,
+        header_text="👋 Welcome to Wild Bites!",
+        body_text=body_text,
         sections=sections
     )
 
@@ -306,10 +297,10 @@ async def show_category_items(sender, country_code, category_key):
     category = menu["categories"][category_key]
     items = category["items"]
 
-    # Send category image if available
+    # Send category image if available (clean image, no caption text)
     image_url = GITHUB_IMAGES.get(category_key)
     if image_url:
-        await send_image_with_caption(sender, image_url, f"📸 {category['name']} Menu")
+        await send_image_with_caption(sender, image_url, "")
 
     rows = []
     for item_id, item in items.items():
@@ -577,6 +568,79 @@ async def handle_smart_flow(sender, text_or_id, is_interactive=False):
         await send_text_message(sender, f"📤 Order sent to manager...\n⏱️ Expected time: 7 minutes\n\n💰 Total: {format_price(country_code, total)}")
         return
 
+    # ========== STAGE: TABLE NUMBER INPUT FOR DINE-IN ==========
+    if session.get("stage") == "get_table_number" and not is_interactive:
+        table_number = text_or_id.strip()
+        if not table_number.isdigit():
+            await send_text_message(sender, "❌ Please enter a valid table number (e.g., 5, 12, etc.)")
+            return
+
+        session["table_number"] = table_number
+        session["stage"] = "payment_selection"
+        customer_sessions[sender] = session
+
+        # Calculate total
+        total = sum(
+            menu["categories"][cat_key]["items"].get(item_id, {}).get("price", 0) * qty
+            for item_id, qty in session["cart"].items()
+            for cat_key in menu["categories"].keys()
+            if item_id in menu["categories"][cat_key].get("items", {})
+        )
+
+        # Send to manager with table number
+        manager_number = session.get("manager_number")
+        order_id, _ = create_order(sender, country_code, session["cart"], menu, f"Table {table_number}", "dinein", "Pending")
+
+        # Build order bill
+        subtotal = sum(
+            menu["categories"][cat_key]["items"].get(item_id, {}).get("price", 0) * qty
+            for item_id, qty in session["cart"].items()
+            for cat_key in menu["categories"].keys()
+            if item_id in menu["categories"][cat_key].get("items", {})
+        )
+
+        bill_text = f"""🆕 DINE-IN ORDER - {order_id}
+
+📱 Customer: {sender}
+🪑 Table: {table_number}
+📍 Country: {COUNTRIES[country_code]['name']}
+
+📊 ITEMS:
+"""
+        for item_id, qty in session["cart"].items():
+            for cat in menu["categories"].values():
+                if item_id in cat["items"]:
+                    item = cat["items"][item_id]
+                    bill_text += f"• {qty}x {item['name']} = {format_price(country_code, item['price'] * qty)}\n"
+                    break
+
+        bill_text += f"""
+💰 BREAKDOWN:
+Subtotal: {format_price(country_code, subtotal)}
+🪑 Type: Dine-in (No delivery)
+───────────────────
+💵 TOTAL: {format_price(country_code, subtotal)}
+
+⏱️ Prep Time: 5 min
+"""
+
+        await send_text_message(manager_number, bill_text)
+
+        # Manager buttons
+        buttons = [
+            {"id": f"approve_{sender}", "title": "✅ Approve"},
+            {"id": f"reject_{sender}", "title": "❌ Reject"}
+        ]
+        await send_interactive_buttons(
+            manager_number,
+            header_text="DINE-IN ORDER",
+            body_text=f"Customer: {sender} | Table: {table_number}",
+            buttons=buttons
+        )
+
+        await send_text_message(sender, f"📤 Order sent to manager...\n⏱️ Expected time: 5 minutes\n\n💰 Total: {format_price(country_code, subtotal)}")
+        return
+
     # ========== COMMANDS ==========
     if text_or_id.lower() == "owner" and not is_interactive:
         msg = """🌍 SELECT COUNTRY:
@@ -775,9 +839,10 @@ Reply with number (1-10)"""
         if text_or_id == "cart_checkout":
             buttons = [
                 {"id": "delivery_home", "title": "🏠 Home Delivery"},
-                {"id": "delivery_pickup", "title": "🏪 Pickup"}
+                {"id": "delivery_pickup", "title": "🏪 Pickup"},
+                {"id": "delivery_dinein", "title": "🪑 Dine-in"}
             ]
-            await send_interactive_buttons(sender, "📦 DELIVERY", "Choose delivery type", buttons)
+            await send_interactive_buttons(sender, "📦 DELIVERY", "Choose how you'd like to receive your order", buttons)
             return
 
         if text_or_id == "cart_clear":
@@ -825,6 +890,13 @@ House B-32, Block 4, Gulshan-e-Iqbal, near Mosque"""
             await send_text_message(sender, f"📤 Order sent to manager...\n⏱️ Expected time: 5 minutes (pickup, no delivery)")
             return
 
+        if text_or_id == "delivery_dinein":
+            session["delivery_type"] = "dinein"
+            session["stage"] = "get_table_number"
+            customer_sessions[sender] = session
+            await send_text_message(sender, "🪑 Please provide your table number:")
+            return
+
     # ========== CUSTOM QUANTITY INPUT ==========
     if session.get("pending_qty_item") and not is_interactive and text_or_id.strip().isdigit():
         try:
@@ -859,6 +931,37 @@ House B-32, Block 4, Gulshan-e-Iqbal, near Mosque"""
         except ValueError:
             await send_text_message(sender, "❌ Please enter a valid number")
             return
+
+    # ========== MANAGER APPROVAL/REJECTION ==========
+    if text_or_id.startswith("approve_") and is_interactive:
+        customer = text_or_id.replace("approve_", "")
+        msg = """✅ ORDER APPROVED!
+
+Your order has been approved by the restaurant.
+Get ready for your food! 🍽️
+
+⏱️ Prep time: 5 minutes"""
+        await send_text_message(customer, msg)
+
+        # Save approval status
+        if customer in customer_sessions:
+            customer_sessions[customer]["order_approved"] = True
+        return
+
+    if text_or_id.startswith("reject_") and is_interactive:
+        customer = text_or_id.replace("reject_", "")
+        msg = """❌ ORDER CANCELLED
+
+Your order has been cancelled by the restaurant.
+
+Please contact us for more information:
+📞 Restaurant Manager"""
+        await send_text_message(customer, msg)
+
+        # Save cancellation status
+        if customer in customer_sessions:
+            customer_sessions[customer]["order_cancelled"] = True
+        return
 
     # ========== ORDER STATUS CHECK ==========
     if text_or_id.lower() in ["order status", "status", "where is my order", "order kahan hai"] and not is_interactive:
