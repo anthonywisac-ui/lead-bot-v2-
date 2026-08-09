@@ -9,7 +9,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from config import VERIFY_TOKEN
-from flow import handle_flow, new_session, get_session
+from flow_buttons import (
+    handle_button_press, handle_list_item_selection,
+    send_country_selection, send_text_message
+)
 from db import customer_sessions
 
 app = FastAPI()
@@ -50,21 +53,35 @@ async def handle_webhook(request: Request):
             print(f"\n📨 Incoming Message from {sender}")
             print(f"   Type: {msg_type}")
 
+            # Handle text messages
             if msg_type == "text":
                 text = message.get("text", {}).get("body", "").strip()
                 print(f"   Text: {text}")
-                await handle_flow(sender, text)
 
+                # Check if user is asking for country selection
+                if text.lower() in ["owner", "countries", "select", "change"]:
+                    await send_country_selection(sender)
+                else:
+                    # For other text, just acknowledge
+                    await send_text_message(sender, "👍 Got it! Use buttons to navigate the menu")
+
+            # Handle button clicks (category, quantity, delivery, payment)
             elif msg_type == "interactive":
                 interactive = message.get("interactive", {})
                 button_reply = interactive.get("button_reply", {})
                 list_reply = interactive.get("list_reply", {})
 
-                reply_id = button_reply.get("id") or list_reply.get("id")
-                print(f"   Reply ID: {reply_id}")
+                if button_reply:
+                    button_id = button_reply.get("id")
+                    print(f"   Button: {button_id}")
+                    if button_id:
+                        await handle_button_press(sender, button_id)
 
-                if reply_id:
-                    await handle_flow(sender, reply_id, is_button=True)
+                elif list_reply:
+                    item_id = list_reply.get("id")
+                    print(f"   List Selection: {item_id}")
+                    if item_id:
+                        await handle_list_item_selection(sender, item_id)
 
         return {"status": "ok"}
 
