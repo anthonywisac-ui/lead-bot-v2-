@@ -53,6 +53,9 @@ async def handle_webhook(request: Request):
             if msg_type == "text":
                 text = message.get("text", {}).get("body", "").strip()
                 print(f"   Text: {text}")
+
+                # Route to smart flow
+                # Smart flow will use Gemini for ambiguous inputs
                 await handle_smart_flow(sender, text, is_interactive=False)
 
             # ORDER MESSAGE - Customer selected items from WhatsApp catalog

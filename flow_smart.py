@@ -573,6 +573,27 @@ async def handle_smart_flow(sender, text_or_id, is_interactive=False):
             await show_welcome(sender, detected_country)
             return
 
+    # ========== GEMINI FALLBACK: Use AI for ambiguous/complex inputs ==========
+    # If message doesn't match any known patterns, try Gemini for intelligent handling
+    if not is_interactive and session.get("stage") in ["browsing", "greeting"]:
+        # Check if this looks like a command or greeting
+        text_lower = text_or_id.lower().strip()
+
+        # Known commands/keywords
+        known_patterns = ["hi", "hello", "new", "menu", "owner", "status", "help", "salam"]
+
+        # If not a known pattern, use Gemini to understand intent
+        if not any(pattern in text_lower for pattern in known_patterns):
+            from gemini_conversation import handle_customer_inquiry
+
+            # Let Gemini handle the inquiry
+            handled = await handle_customer_inquiry(sender, text_or_id)
+
+            if handled:
+                return  # Response already sent by Gemini
+
+        # If Gemini couldn't handle or it's a known pattern, continue with regular flow
+
     # Handle manager number input for client
     if session.get("stage") == "get_manager_number" and not is_interactive:
         manager_num = text_or_id.strip()

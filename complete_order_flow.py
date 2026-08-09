@@ -176,10 +176,19 @@ async def ask_delivery_method_complete(sender):
 
 
 async def create_and_send_order(sender, country_code, session):
-    """Create order, show summary, send to manager"""
+    """
+    Create order with AI-powered summaries.
+
+    Uses Gemini to generate:
+    - Warm customer confirmation
+    - Smart manager alerts
+    - Optional upsell suggestions
+    """
     from whatsapp_interactive import send_text_message
     from menus_multi import get_menu, format_price
     from order_manager import MANAGER_NUMBER
+    from gemini_order_ai import generate_order_package
+    import uuid
 
     cart = session.get("cart", {})
     delivery_type = session.get("delivery_type", "home")
@@ -191,73 +200,98 @@ async def create_and_send_order(sender, country_code, session):
         await send_text_message(sender, "❌ Cart is empty!")
         return False
 
-    # Build complete summary
-    summary = "📦 **ORDER SUMMARY**\n\n"
+    # Calculate total
     total = 0
-    items_list = []
+    for item_id, qty in cart.items():
+        for category in menu["categories"].values():
+            if item_id in category["items"]:
+                item = category["items"][item_id]
+                total += item["price"] * qty
+                break
+
+    # Add delivery charge
+    delivery_charge = 0
+    if delivery_type == "home":
+        delivery_charge = 150 if country_code == "PK" else 5
+        total += delivery_charge
+
+    # Generate order ID
+    order_id = f"WILD{sender[-8:]}_{str(uuid.uuid4())[:8].upper()}"
+
+    # ========== GENERATE ALL AI RESPONSES IN PARALLEL ==========
+    ai_responses = await generate_order_package(
+        order_id=order_id,
+        sender=sender,
+        country_code=country_code,
+        cart=cart,
+        delivery_type=delivery_type,
+        address_or_table=address if delivery_type == "home" else table_number,
+        total=total,
+        menu=menu
+    )
+
+    # ========== BUILD STRUCTURED ORDER SUMMARY ==========
+    structured_summary = "📦 **ORDER SUMMARY**\n\n"
 
     for item_id, qty in cart.items():
-        found = False
         for category in menu["categories"].values():
             if item_id in category["items"]:
                 item = category["items"][item_id]
                 price = item["price"] * qty
-                total += price
-                summary += f"• {qty}x {item['name']}\n"
-                summary += f"  {format_price(country_code, price)}\n\n"
-                items_list.append(item["name"])
-                found = True
+                structured_summary += f"• {qty}x {item['name']}\n"
+                structured_summary += f"  {format_price(country_code, price)}\n\n"
                 break
 
     # Add delivery info
-    delivery_charge = 0
     if delivery_type == "home":
-        delivery_charge = 150 if country_code == "PK" else 5
-        summary += f"📍 **Address**: {address}\n"
-        summary += f"🚚 **Delivery**: {format_price(country_code, delivery_charge)}\n"
-        total += delivery_charge
+        structured_summary += f"📍 **Address**: {address}\n"
+        structured_summary += f"🚚 **Delivery**: {format_price(country_code, delivery_charge)}\n"
     elif delivery_type == "pickup":
-        summary += "🚗 **Pickup Order** (Ready in 20 min)\n"
+        structured_summary += "🚗 **Pickup Order** (Ready in 20 min)\n"
     else:  # dine_in
-        summary += f"🍽️ **Table**: {table_number}\n"
+        structured_summary += f"🍽️ **Table**: {table_number}\n"
 
-    summary += f"\n{'='*40}\n"
-    summary += f"💰 **TOTAL: {format_price(country_code, total)}**\n"
-    summary += f"{'='*40}\n"
+    structured_summary += f"\n{'='*40}\n"
+    structured_summary += f"💰 **TOTAL: {format_price(country_code, total)}**\n"
+    structured_summary += f"{'='*40}\n"
 
-    # Send to customer
-    await send_text_message(sender, summary)
+    # ========== SEND TO CUSTOMER ==========
+    # AI-powered summary
+    customer_msg = f"""✅ **ORDER CONFIRMED!**
 
-    # Send to manager
-    manager_msg = f"""
-🔔 **NEW ORDER** #{sender[-8:]}
+Order ID: #{order_id}
 
-📋 Items:
-{summary}
+{structured_summary}
 
-📞 Customer: {sender}
+{ai_responses['customer_summary']}
+"""
+
+    await send_text_message(sender, customer_msg)
+
+    # Optional: Send upsell if available
+    if ai_responses.get("upsell"):
+        await send_text_message(sender, f"💡 {ai_responses['upsell']}")
+
+    # ========== SEND TO MANAGER ==========
+    manager_msg = f"""🔔 **NEW ORDER** #{order_id}
+
+📋 STRUCTURED BREAKDOWN:
+{structured_summary}
+
+👤 Customer: {sender}
+📍 Location: {address if delivery_type == "home" else table_number}
 🚚 Type: {delivery_type.upper()}
-{f"📍 Address: {address}" if delivery_type == "home" else f"🍽️ Table: {table_number}"}
 
-⏱️ Ready in: 20-25 minutes
+🤖 AI MANAGER ALERT:
+{ai_responses['manager_alert']}
+
+⏱️ Estimated Ready: 20-25 minutes
 """
 
     await send_text_message(MANAGER_NUMBER, manager_msg)
 
-    # Confirm to customer
-    confirm_msg = f"""
-✅ **ORDER CONFIRMED!**
-
-Order ID: #WILD{sender[-8:]}
-
-{summary}
-
-🍳 Preparing your order...
-⏱️ Ready in: 20-25 minutes
-
-Thank you! 🙏
-"""
-
-    await send_text_message(sender, confirm_msg)
+    print(f"✅ Order created: {order_id}")
+    print(f"📊 Total: {format_price(country_code, total)}")
+    print(f"🎯 Items: {len(cart)}")
 
     return True
