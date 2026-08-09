@@ -93,7 +93,7 @@ async def process_message(sender: str, text: str):
 
 
 async def send_message(phone_number: str, message: str):
-    """Send message via WhatsApp Business API using template"""
+    """Send text message via WhatsApp Business API"""
     try:
         url = f"https://graph.facebook.com/v25.0/{WHATSAPP_PHONE_ID}/messages"
 
@@ -105,12 +105,9 @@ async def send_message(phone_number: str, message: str):
         payload = {
             "messaging_product": "whatsapp",
             "to": phone_number,
-            "type": "template",
-            "template": {
-                "name": "hello_world",
-                "language": {
-                    "code": "en_US"
-                }
+            "type": "text",
+            "text": {
+                "body": message
             }
         }
 
@@ -130,7 +127,7 @@ async def send_message(phone_number: str, message: str):
 
 
 async def send_interactive_menu(phone_number: str):
-    """Send menu using hello_world template"""
+    """Send interactive menu with buttons"""
     try:
         url = f"https://graph.facebook.com/v25.0/{WHATSAPP_PHONE_ID}/messages"
 
@@ -142,12 +139,9 @@ async def send_interactive_menu(phone_number: str):
         payload = {
             "messaging_product": "whatsapp",
             "to": phone_number,
-            "type": "template",
-            "template": {
-                "name": "hello_world",
-                "language": {
-                    "code": "en_US"
-                }
+            "type": "text",
+            "text": {
+                "body": "What would you like to do?\n\n1️⃣ Option 1\n2️⃣ Option 2"
             }
         }
 
