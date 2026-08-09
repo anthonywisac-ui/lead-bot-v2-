@@ -98,7 +98,7 @@ async def send_message(phone_number: str, message: str):
         url = f"https://graph.instagram.com/v18.0/{WHATSAPP_PHONE_ID}/messages"
 
         headers = {
-            "Authorization": f"Bearer {WHATSAPP_TOKEN}",
+            "Authorization": WHATSAPP_TOKEN,
             "Content-Type": "application/json",
         }
 
@@ -134,7 +134,7 @@ async def send_interactive_menu(phone_number: str):
         url = f"https://graph.instagram.com/v18.0/{WHATSAPP_PHONE_ID}/messages"
 
         headers = {
-            "Authorization": f"Bearer {WHATSAPP_TOKEN}",
+            "Authorization": WHATSAPP_TOKEN,
             "Content-Type": "application/json",
         }
 
