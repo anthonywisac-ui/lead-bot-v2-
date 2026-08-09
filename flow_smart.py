@@ -1,4 +1,4 @@
-# SMART FLOW v2 - Complete order system with manager approval, timing, returning customers
+# SMART FLOW v3 - COMPLETE system with returning customers, custom qty, manager status updates, upsell
 import asyncio
 import time
 from datetime import datetime
@@ -7,7 +7,7 @@ from country_selector import COUNTRIES
 from whatsapp_interactive import send_interactive_buttons, send_interactive_list, send_text_message
 from gemini_ai import get_ai_response
 from db import customer_sessions
-from order_manager import create_order, MANAGER_NUMBER
+from order_manager import create_order, MANAGER_NUMBER, get_customer_last_order, get_order, update_order_status, get_time_elapsed
 
 DELIVERY_SETTINGS = {
     "PK": {"min_delivery": 500, "min_pickup": 200, "delivery_fee": 150, "free_above": 2000},
@@ -22,9 +22,11 @@ DELIVERY_SETTINGS = {
     "CA": {"min_delivery": 18, "min_pickup": 7, "delivery_fee": 5.99, "free_above": 60},
 }
 
-MANAGER_NUMBER = "923351021321"  # Update with actual manager number
-
 ITEMS_NEED_QUANTITY = ["naan", "roti", "roll", "burger", "karahi", "curry", "pizza", "kebab"]
+
+PREP_TIME = 300  # 5 minutes
+DELIVERY_TIME = 120  # 2 minutes
+TOTAL_TIME = 420  # 7 minutes
 
 def get_delivery_charge(country_code, total):
     """Calculate delivery charge based on country and total"""
@@ -99,6 +101,141 @@ def get_smart_suggestions(item_name):
 
     return None
 
+async def show_returning_customer_options(sender, country_code):
+    """Show options for returning customer"""
+    last_order = get_customer_last_order(sender)
+    if not last_order:
+        await show_welcome(sender, country_code)
+        return
+
+    menu = get_menu(country_code)
+    country_name = COUNTRIES[country_code]["name"]
+
+    msg = f"""👋 Welcome back!
+
+Your last order was:
+📍 {last_order['country']}
+🏠 {last_order['address'][:40]}...
+
+Would you like to:"""
+
+    await send_text_message(sender, msg)
+
+    buttons = [
+        {"id": "repeat_last_order", "title": "🔁 Repeat Order"},
+        {"id": "new_order", "title": "📝 New Order"},
+        {"id": "change_location", "title": "📍 Change Location"}
+    ]
+
+    await send_interactive_buttons(
+        sender,
+        header_text="WELCOME BACK!",
+        body_text="Quick actions",
+        buttons=buttons
+    )
+
+async def show_custom_quantity_input(sender, item_name):
+    """Show message asking for custom quantity"""
+    msg = f"""📊 How many {item_name} would you like?
+
+Just type a number (e.g., 5, 10, 15)"""
+    await send_text_message(sender, msg)
+
+async def handle_order_status_check(sender, country_code):
+    """Check recent order status and send update"""
+    from order_manager import get_order_by_customer_time, get_order_status_message
+
+    recent_orders = get_order_by_customer_time(sender)
+    if not recent_orders:
+        await send_text_message(sender, "❌ No recent orders found.\n\n📝 Start a new order?")
+        await show_welcome(sender, country_code)
+        return
+
+    # Get most recent order
+    order_id, order, elapsed = recent_orders[-1]
+
+    status_msg = get_order_status_message(order_id)
+    if status_msg:
+        await send_text_message(sender, status_msg)
+
+    # If order is approved and > 5 minutes, ask manager for status
+    if order["status"] == "approved" and elapsed > PREP_TIME:
+        msg = f"""📋 Checking order status with manager...
+Order ID: {order_id}"""
+        await send_text_message(sender, msg)
+
+        # Send to manager
+        manager_msg = f"""🔔 CUSTOMER UPDATE REQUEST
+
+Order ID: {order_id}
+Customer: {sender}
+Time elapsed: {elapsed // 60} min {elapsed % 60} sec
+
+Customer is checking order status"""
+        await send_text_message(MANAGER_NUMBER, manager_msg)
+
+        buttons = [
+            {"id": f"status_prep_{order_id}", "title": "🍳 Still Preparing"},
+            {"id": f"status_deliv10_{order_id}", "title": "🚚 10 min away"},
+            {"id": f"status_deliv20_{order_id}", "title": "🚚 20 min away"},
+            {"id": f"status_delivered_{order_id}", "title": "✅ Delivered"}
+        ]
+
+        await send_interactive_buttons(
+            MANAGER_NUMBER,
+            header_text="UPDATE ORDER STATUS",
+            body_text=f"Customer: {sender}",
+            buttons=buttons
+        )
+    return
+
+async def handle_manager_status_update(order_id, status):
+    """Handle manager status update"""
+    order = get_order(order_id)
+    if not order:
+        return
+
+    customer = order["customer"]
+    country_code = order["country"]
+    menu = order["menu"]
+
+    if status == "prep":
+        msg = f"""🍳 Your order is still being prepared!
+
+We're almost done... just a few more minutes!
+Thanks for your patience! 🙏"""
+        await send_text_message(customer, msg)
+        update_order_status(order_id, "preparing")
+
+    elif status == "deliv10":
+        msg = f"""🚚 GOOD NEWS! Your order is out for delivery!
+
+Expected arrival: ⏱️ 10 minutes away
+
+Driver is on the way! 🚗"""
+        await send_text_message(customer, msg)
+        update_order_status(order_id, "delivering_10")
+
+    elif status == "deliv20":
+        msg = f"""🚚 Your order is out for delivery!
+
+Apologies for the delay - restaurant was in peak hours!
+Expected arrival: ⏱️ 20 minutes away
+
+Your food will be worth the wait! 😊"""
+        await send_text_message(customer, msg)
+        update_order_status(order_id, "delivering_20")
+
+    elif status == "delivered":
+        msg = f"""✅ ORDER DELIVERED!
+
+Thank you for your order! 🙏
+We hope you enjoyed it!
+
+📝 Order again soon!"""
+        await send_text_message(customer, msg)
+        update_order_status(order_id, "delivered")
+
 async def show_welcome(sender, country_code):
     """Show welcome menu"""
     country_info = COUNTRIES[country_code]
@@ -166,13 +303,14 @@ async def show_quantity_and_proceed(sender, item_id, item_name):
     )
 
 async def show_quantity_list(sender, item_id):
-    """Show quantity list: 2x, 3x, 4x, 5x, 6x"""
+    """Show quantity list: 2x, 3x, 4x, 5x, 6x, More"""
     buttons = [
         {"id": f"qty_set_2_{item_id}", "title": "2x"},
         {"id": f"qty_set_3_{item_id}", "title": "3x"},
         {"id": f"qty_set_4_{item_id}", "title": "4x"},
         {"id": f"qty_set_5_{item_id}", "title": "5x"},
-        {"id": f"qty_set_6_{item_id}", "title": "6x"}
+        {"id": f"qty_set_6_{item_id}", "title": "6x"},
+        {"id": f"qty_more_{item_id}", "title": "✏️ Custom"}
     ]
     await send_interactive_buttons(
         sender,
@@ -302,20 +440,31 @@ async def handle_smart_flow(sender, text_or_id, is_interactive=False):
     country_code = session.get("country_code")
     menu = get_menu(country_code) if country_code else None
 
-    # ========== STAGE 1: PHONE NUMBER COLLECTION ==========
+    # ========== STAGE 1: RETURNING CUSTOMER CHECK ==========
     if session.get("stage") == "greeting" and not is_interactive and not session.get("phone_collected"):
         session["phone_collected"] = True
         session["customer_phone"] = sender
         customer_sessions[sender] = session
-        await send_text_message(sender, f"✅ Number registered: {sender}\n\n📍 Detecting location...")
 
         # Auto-detect country
         detected = get_country_from_phone(sender)
         session["country_code"] = detected
-        session["stage"] = "browsing"
         customer_sessions[sender] = session
-        await show_welcome(sender, detected)
-        return
+
+        # Check if returning customer
+        last_order = get_customer_last_order(sender)
+        if last_order:
+            # Show returning customer options
+            session["stage"] = "browsing"
+            customer_sessions[sender] = session
+            await show_returning_customer_options(sender, detected)
+            return
+        else:
+            # New customer - show welcome
+            session["stage"] = "browsing"
+            customer_sessions[sender] = session
+            await show_welcome(sender, detected)
+            return
 
     # ========== STAGE 2: ADDRESS INPUT (PRIORITY) ==========
     if session.get("stage") == "address_input" and not is_interactive:
@@ -431,6 +580,18 @@ Reply with number (1-10)"""
             await show_quantity_list(sender, item_id)
             return
 
+        # ===== QUANTITY MORE (CUSTOM INPUT) =====
+        if text_or_id.startswith("qty_more_"):
+            item_id = text_or_id.replace("qty_more_", "")
+            # Find item name
+            for cat_key, cat_data in menu["categories"].items():
+                if item_id in cat_data.get("items", {}):
+                    item = cat_data["items"][item_id]
+                    session["pending_qty_item"] = item_id
+                    customer_sessions[sender] = session
+                    await show_custom_quantity_input(sender, item["name"])
+                    return
+
         # ===== QUANTITY SET (2x, 3x, 4x, 5x, 6x) =====
         if text_or_id.startswith("qty_set_"):
             parts = text_or_id.split("_")
@@ -454,6 +615,45 @@ Reply with number (1-10)"""
         # ===== PROCEED BUTTON =====
         if text_or_id == "proceed_order":
             await show_cart_with_total(sender, country_code, session["cart"], menu)
+            return
+
+        # ===== REPEAT LAST ORDER =====
+        if text_or_id == "repeat_last_order":
+            last_order = get_customer_last_order(sender)
+            if last_order and country_code == last_order["country"]:
+                session["stage"] = "browsing"
+                customer_sessions[sender] = session
+                await send_text_message(sender, "🔄 Loading your previous items...")
+                # Items will be shown from order history in future version
+                await show_welcome(sender, country_code)
+            return
+
+        if text_or_id == "new_order":
+            session["cart"] = {}
+            session["stage"] = "browsing"
+            customer_sessions[sender] = session
+            await show_welcome(sender, country_code)
+            return
+
+        if text_or_id == "change_location":
+            msg = """🌍 SELECT COUNTRY:
+
+1️⃣ 🇵🇰 Pakistan    2️⃣ 🇦🇪 UAE          3️⃣ 🇸🇦 Saudi Arabia
+4️⃣ 🇶🇦 Qatar       5️⃣ 🇰🇼 Kuwait       6️⃣ 🇧🇭 Bahrain
+7️⃣ 🇴🇲 Oman        8️⃣ 🇺🇸 USA          9️⃣ 🇬🇧 UK
+🔟 🇨🇦 Canada
+
+Reply with number (1-10)"""
+            await send_text_message(sender, msg)
+            return
+
+        # ===== MANAGER STATUS UPDATES =====
+        if text_or_id.startswith("status_"):
+            parts = text_or_id.split("_")
+            status_type = parts[1]  # prep, deliv10, deliv20, delivered
+            order_id = "_".join(parts[2:])
+
+            await handle_manager_status_update(order_id, status_type)
             return
 
         # ===== UPSELL BUTTONS =====
@@ -538,3 +738,43 @@ House B-32, Block 4, Gulshan-e-Iqbal, near Mosque"""
 
             await send_text_message(sender, f"📤 Order sent to manager...\n⏱️ Expected time: 5 minutes (pickup, no delivery)")
             return
+
+    # ========== CUSTOM QUANTITY INPUT ==========
+    if session.get("pending_qty_item") and not is_interactive and text_or_id.strip().isdigit():
+        try:
+            qty = int(text_or_id.strip())
+            if qty <= 0:
+                await send_text_message(sender, "❌ Please enter a number greater than 0")
+                return
+
+            item_id = session.get("pending_qty_item")
+            session["cart"][item_id] = qty
+            session.pop("pending_qty_item", None)
+            customer_sessions[sender] = session
+
+            for cat_key, cat_data in menu["categories"].items():
+                if item_id in cat_data.get("items", {}):
+                    item = cat_data["items"][item_id]
+                    emoji = get_item_emoji(item["name"])
+                    msg = f"✅ Added {qty}x {emoji} {item['name']} to cart!"
+                    await send_text_message(sender, msg)
+
+                    suggestions = get_smart_suggestions(item["name"])
+                    if suggestions:
+                        await send_interactive_buttons(
+                            sender,
+                            header_text="💡 ADD-ONS",
+                            body_text="Pair with popular additions",
+                            buttons=suggestions
+                        )
+
+                    await show_cart_with_total(sender, country_code, session["cart"], menu)
+                    return
+        except ValueError:
+            await send_text_message(sender, "❌ Please enter a valid number")
+            return
+
+    # ========== ORDER STATUS CHECK ==========
+    if text_or_id.lower() in ["order status", "status", "where is my order", "order kahan hai"] and not is_interactive:
+        await handle_order_status_check(sender, country_code)
+        return
