@@ -93,6 +93,18 @@ async def handle_webhook(request: Request):
         return {"status": "error", "message": str(e)}
 
 
+# ==================== TABLE ORDERS ====================
+@app.get("/table/{table_id}")
+async def table_order(table_id: str):
+    """Handle table QR code scan"""
+    return {
+        "status": "ok",
+        "message": "Scan successful",
+        "table_id": table_id,
+        "info": "Send your WhatsApp number to start ordering from this table"
+    }
+
+
 # ==================== HEALTH CHECK ====================
 @app.get("/health")
 async def health_check():

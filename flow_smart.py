@@ -531,8 +531,8 @@ Format: +923xxxxxxxxx or 03xxxxxxxxx"""
             await show_welcome(sender, detected)
             return
 
-    # ========== STAGE 1: RETURNING CUSTOMER CHECK ==========
-    if session.get("stage") == "greeting" and not is_interactive and not session.get("phone_collected"):
+    # ========== STAGE 1: RETURNING CUSTOMER CHECK (FALLBACK - only if no shortcode matched) ==========
+    if session.get("stage") == "greeting" and not is_interactive and not session.get("phone_collected") and text_or_id.lower() not in ["client", "new", "hi", "hello", "salam", "assalam", "assalamu alaikum", "owner"]:
         session["phone_collected"] = True
         session["customer_phone"] = sender
         customer_sessions[sender] = session
