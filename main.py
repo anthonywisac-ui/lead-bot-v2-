@@ -1,7 +1,7 @@
 import os
 import json
 import traceback
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse
 import uvicorn
 from dotenv import load_dotenv
@@ -9,11 +9,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from config import VERIFY_TOKEN
-from flow_buttons import (
-    handle_button_press, handle_list_item_selection,
-    send_country_selection, send_text_message
-)
-from db import customer_sessions
+from flow_complete import handle_complete_flow
 
 app = FastAPI()
 
@@ -50,22 +46,15 @@ async def handle_webhook(request: Request):
             sender = message.get("from")
             msg_type = message.get("type")
 
-            print(f"\n📨 Incoming Message from {sender}")
-            print(f"   Type: {msg_type}")
+            print(f"\n📨 Message from {sender}")
 
-            # Handle text messages
+            # Text messages
             if msg_type == "text":
                 text = message.get("text", {}).get("body", "").strip()
                 print(f"   Text: {text}")
+                await handle_complete_flow(sender, text, is_interactive=False)
 
-                # Check if user is asking for country selection
-                if text.lower() in ["owner", "countries", "select", "change"]:
-                    await send_country_selection(sender)
-                else:
-                    # For other text, just acknowledge
-                    await send_text_message(sender, "👍 Got it! Use buttons to navigate the menu")
-
-            # Handle button clicks (category, quantity, delivery, payment)
+            # Interactive messages (buttons/lists)
             elif msg_type == "interactive":
                 interactive = message.get("interactive", {})
                 button_reply = interactive.get("button_reply", {})
@@ -75,18 +64,18 @@ async def handle_webhook(request: Request):
                     button_id = button_reply.get("id")
                     print(f"   Button: {button_id}")
                     if button_id:
-                        await handle_button_press(sender, button_id)
+                        await handle_complete_flow(sender, button_id, is_interactive=True)
 
                 elif list_reply:
                     item_id = list_reply.get("id")
-                    print(f"   List Selection: {item_id}")
+                    print(f"   List Item: {item_id}")
                     if item_id:
-                        await handle_list_item_selection(sender, item_id)
+                        await handle_complete_flow(sender, item_id, is_interactive=True)
 
         return {"status": "ok"}
 
     except Exception as e:
-        print(f"❌ Webhook error: {e}")
+        print(f"❌ Error: {e}")
         print(traceback.format_exc())
         return {"status": "error", "message": str(e)}
 
@@ -97,15 +86,16 @@ async def health_check():
     """Health check endpoint"""
     return {
         "status": "ok",
-        "service": "restaurant-bot-pipeline",
-        "whatsapp_configured": bool(os.getenv("WHATSAPP_TOKEN") and os.getenv("WHATSAPP_PHONE_NUMBER_ID"))
+        "service": "wild-bites-restaurant-bot",
+        "whatsapp_configured": bool(os.getenv("WHATSAPP_TOKEN"))
     }
 
 
 # ==================== RUN ====================
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8000"))
-    print(f"\n🚀 Restaurant Bot Pipeline starting on port {port}...")
-    print(f"   Phone ID: {os.getenv('WHATSAPP_PHONE_NUMBER_ID')}")
-    print(f"   Manager: {os.getenv('MANAGER_NUMBER')}\n")
+    print(f"\n🚀 Wild Bites Restaurant Bot starting on port {port}...")
+    print(f"✅ Multi-country system ready")
+    print(f"✅ Button-based menu ready")
+    print(f"✅ Images integrated\n")
     uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
