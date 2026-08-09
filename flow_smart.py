@@ -565,7 +565,15 @@ async def handle_smart_flow(sender, text_or_id, is_interactive=False):
             session.get("manager_number")
         )
 
-        await send_text_message(sender, f"📤 Order sent to manager...\n⏱️ Expected time: 7 minutes\n\n💰 Total: {format_price(country_code, total)}")
+        # Auto-approve for delivery (no manager approval needed)
+        await send_text_message(sender, f"""✅ ORDER CONFIRMED!
+
+Your delivery order has been accepted.
+📍 Address: {address[:50]}...
+⏱️ Delivery time: 7 minutes
+
+💰 Total: {format_price(country_code, total)}
+🚚 Delivery charge included""")
         return
 
     # ========== STAGE: TABLE NUMBER INPUT FOR DINE-IN ==========
@@ -638,7 +646,13 @@ Subtotal: {format_price(country_code, subtotal)}
             buttons=buttons
         )
 
-        await send_text_message(sender, f"📤 Order sent to manager...\n⏱️ Expected time: 5 minutes\n\n💰 Total: {format_price(country_code, subtotal)}")
+        await send_text_message(sender, f"""📤 Order sent to manager for approval...
+
+🪑 Table: {table_number}
+⏳ Waiting for manager confirmation
+💰 Total: {format_price(country_code, subtotal)}
+
+Once approved, food will be ready in 5 minutes.""")
         return
 
     # ========== COMMANDS ==========
@@ -884,10 +898,17 @@ House B-32, Block 4, Gulshan-e-Iqbal, near Mosque"""
                 await send_text_message(sender, msg)
                 return
 
-            # Send to manager (use custom manager number if client)
+            # Auto-approve for pickup (no manager approval needed)
             await send_to_manager(sender, country_code, session["cart"], menu, "Pickup", "pickup", "Pending", session.get("manager_number"))
 
-            await send_text_message(sender, f"📤 Order sent to manager...\n⏱️ Expected time: 5 minutes (pickup, no delivery)")
+            # Show success to customer immediately
+            await send_text_message(sender, f"""✅ ORDER CONFIRMED!
+
+Your pickup order has been accepted.
+⏱️ Ready in: 5 minutes
+
+📍 Location: Wild Bites Restaurant
+💰 Total: {format_price(country_code, total)}""")
             return
 
         if text_or_id == "delivery_dinein":
@@ -940,7 +961,8 @@ House B-32, Block 4, Gulshan-e-Iqbal, near Mosque"""
 Your order has been approved by the restaurant.
 Get ready for your food! 🍽️
 
-⏱️ Prep time: 5 minutes"""
+⏱️ Prep time: 5 minutes
+🚚 Will be ready soon!"""
         await send_text_message(customer, msg)
 
         # Save approval status
@@ -950,12 +972,20 @@ Get ready for your food! 🍽️
 
     if text_or_id.startswith("reject_") and is_interactive:
         customer = text_or_id.replace("reject_", "")
-        msg = """❌ ORDER CANCELLED
+        manager_phone = MANAGER_NUMBER
+
+        # Try to get custom manager number from session
+        if customer in customer_sessions:
+            manager_phone = customer_sessions[customer].get("manager_number", MANAGER_NUMBER)
+
+        msg = f"""❌ ORDER CANCELLED
 
 Your order has been cancelled by the restaurant.
 
-Please contact us for more information:
-📞 Restaurant Manager"""
+Please contact the manager:
+📞 {manager_phone}
+
+We apologize for the inconvenience."""
         await send_text_message(customer, msg)
 
         # Save cancellation status
