@@ -254,11 +254,11 @@ We hope you enjoyed it!
         update_order_status(order_id, "delivered")
 
 async def show_welcome(sender, country_code):
-    """Show welcome with WhatsApp native catalog"""
-    from whatsapp_native_catalog_handler import greeting_flow
+    """Show welcome with categories and menu"""
+    from complete_order_flow import greeting_and_categories
 
-    # Use WhatsApp's native beautiful catalog instead of custom buttons
-    await greeting_flow(sender, country_code, {})
+    # Show greeting and categories for browsing
+    await greeting_and_categories(sender, country_code)
 
 async def show_items_single_mode(sender, country_code, category_key):
     """Show items one by one - traditional single item mode"""
@@ -594,181 +594,48 @@ async def handle_smart_flow(sender, text_or_id, is_interactive=False):
         return
 
 
-    # ========== HANDLE READY TO ORDER BUTTON ==========
-    if text_or_id == "ready_to_order" or (is_interactive and text_or_id == "ready_to_order"):
-        # Customer tapped "Ready to Order" button
-        from catalog_flow_handler import ask_delivery_method
-        await ask_delivery_method(sender, session, session["country_code"])
-        return
+    # Old handlers removed - new interactive buttons handle delivery selection
 
-    # ========== STAGE: AFTER CATALOG SELECTION ==========
-    # When customer browses catalog and comes back with message, ask delivery method
-    if session.get("stage") == "browsing" and not is_interactive and text_or_id.lower().strip() not in ["new", "hi", "hello"]:
-        # Customer sent message after browsing catalog
-        # Move to delivery method selection
-        from catalog_flow_handler import ask_delivery_method
-        await ask_delivery_method(sender, session, session["country_code"])
-        return
-
-    # ========== STAGE: DELIVERY METHOD SELECTION ==========
-    if session.get("stage") == "delivery_selection" and not is_interactive:
-        delivery_type = text_or_id.lower().strip()
-
-        # Check which delivery method they chose
-        if "delivery" in delivery_type or "home" in delivery_type or "🏠" in delivery_type:
-            session["delivery_type"] = "home"
-            session["stage"] = "address_input"
-            customer_sessions[sender] = session
-            await send_text_message(sender, """
-🏠 **Home Delivery**
-
-Please share your delivery address:
-
-📍 Format: House/Flat number, Street Name, Area, Nearest Landmark
-
-Example: House B-32, Block 4, Gulshan-e-Iqbal, near Mosque
-""")
-            return
-
-        elif "pickup" in delivery_type or "🚗" in delivery_type:
-            session["delivery_type"] = "pickup"
-            session["stage"] = "payment_selection"
-            customer_sessions[sender] = session
-            await send_text_message(sender, """
-✅ **Pickup Order Confirmed!**
-
-Your order will be ready in 15-20 minutes.
-🚗 Come pick it up from Wild Bites!
-
-Thank you! 🙏
-""")
-            return
-
-        elif "dine" in delivery_type or "table" in delivery_type or "🍽️" in delivery_type:
-            session["delivery_type"] = "dine_in"
-            session["stage"] = "get_table_number"
-            customer_sessions[sender] = session
-            await send_text_message(sender, """
-🍽️ **Dine-in Order**
-
-Which table are you at? (e.g., Table 5, Corner Table, etc.)
-""")
-            return
-        else:
-            await send_text_message(sender, "❓ Please choose:\n🏠 Delivery\n🚗 Pickup\n🍽️ Dine-in")
-            return
-
-    # ========== STAGE 2: ADDRESS INPUT (PRIORITY) ==========
+    # ========== STAGE: ADDRESS INPUT ==========
     if session.get("stage") == "address_input" and not is_interactive:
         address = text_or_id.strip()
         if len(address) < 10:
-            await send_text_message(sender, "❌ Address too short. Please be more specific.\n\n(e.g., House/Flat 123, Street Name, Area, Nearest Place)")
+            await send_text_message(sender, "❌ Address too short. Please be more specific.\n\nExample: House B-32, Block 4, Gulshan-e-Iqbal, near Mosque")
             return
 
         session["address"] = address
-        session["stage"] = "payment_selection"
+        session["stage"] = "confirm_order"
         customer_sessions[sender] = session
 
-        # Send to manager (use custom manager number if client)
-        total = await send_to_manager(
-            sender,
-            country_code,
-            session["cart"],
-            menu,
-            address,
-            session.get("delivery_type", "home"),
-            "Pending",
-            session.get("manager_number")
-        )
+        # Create and send order
+        from complete_order_flow import create_and_send_order
+        success = await create_and_send_order(sender, country_code, session)
 
-        # Auto-approve for delivery (no manager approval needed)
-        await send_text_message(sender, f"""✅ ORDER CONFIRMED!
-
-Your delivery order has been accepted.
-📍 Address: {address[:50]}...
-⏱️ Delivery time: 7 minutes
-
-💰 Total: {format_price(country_code, total)}
-🚚 Delivery charge included""")
+        if success:
+            session["stage"] = "order_complete"
+            customer_sessions[sender] = session
         return
 
     # ========== STAGE: TABLE NUMBER INPUT FOR DINE-IN ==========
-    if session.get("stage") == "get_table_number" and not is_interactive:
+    if session.get("stage") == "table_input" and not is_interactive:
         table_number = text_or_id.strip()
-        if not table_number.isdigit():
-            await send_text_message(sender, "❌ Please enter a valid table number (e.g., 5, 12, etc.)")
+
+        # Accept table number (digit or text like "corner table")
+        if not table_number or len(table_number) < 1:
+            await send_text_message(sender, "❌ Please enter a valid table number")
             return
 
         session["table_number"] = table_number
-        session["stage"] = "payment_selection"
+        session["stage"] = "confirm_order"
         customer_sessions[sender] = session
 
-        # Calculate total
-        total = sum(
-            menu["categories"][cat_key]["items"].get(item_id, {}).get("price", 0) * qty
-            for item_id, qty in session["cart"].items()
-            for cat_key in menu["categories"].keys()
-            if item_id in menu["categories"][cat_key].get("items", {})
-        )
+        # Create and send order
+        from complete_order_flow import create_and_send_order
+        success = await create_and_send_order(sender, country_code, session)
 
-        # Send to manager with table number
-        manager_number = session.get("manager_number")
-        order_id, _ = create_order(sender, country_code, session["cart"], menu, f"Table {table_number}", "dinein", "Pending")
-
-        # Build order bill
-        subtotal = sum(
-            menu["categories"][cat_key]["items"].get(item_id, {}).get("price", 0) * qty
-            for item_id, qty in session["cart"].items()
-            for cat_key in menu["categories"].keys()
-            if item_id in menu["categories"][cat_key].get("items", {})
-        )
-
-        bill_text = f"""🆕 DINE-IN ORDER - {order_id}
-
-📱 Customer: {sender}
-🪑 Table: {table_number}
-📍 Country: {COUNTRIES[country_code]['name']}
-
-📊 ITEMS:
-"""
-        for item_id, qty in session["cart"].items():
-            for cat in menu["categories"].values():
-                if item_id in cat["items"]:
-                    item = cat["items"][item_id]
-                    bill_text += f"• {qty}x {item['name']} = {format_price(country_code, item['price'] * qty)}\n"
-                    break
-
-        bill_text += f"""
-💰 BREAKDOWN:
-Subtotal: {format_price(country_code, subtotal)}
-🪑 Type: Dine-in (No delivery)
-───────────────────
-💵 TOTAL: {format_price(country_code, subtotal)}
-
-⏱️ Prep Time: 5 min
-"""
-
-        await send_text_message(manager_number, bill_text)
-
-        # Manager buttons
-        buttons = [
-            {"id": f"approve_{sender}", "title": "✅ Approve"},
-            {"id": f"reject_{sender}", "title": "❌ Reject"}
-        ]
-        await send_interactive_buttons(
-            manager_number,
-            header_text="DINE-IN ORDER",
-            body_text=f"Customer: {sender} | Table: {table_number}",
-            buttons=buttons
-        )
-
-        await send_text_message(sender, f"""📤 Order sent to manager for approval...
-
-🪑 Table: {table_number}
-⏳ Waiting for manager confirmation
-💰 Total: {format_price(country_code, subtotal)}
-
-Once approved, food will be ready in 5 minutes.""")
+        if success:
+            session["stage"] = "order_complete"
+            customer_sessions[sender] = session
         return
 
     # ========== COMMANDS ==========
@@ -809,13 +676,110 @@ Reply with number (1-10)"""
 
     # ========== INTERACTIVE SELECTIONS ==========
     if is_interactive:
-        # ===== MODE SELECTION =====
+        # ===== CATEGORY SELECTION =====
+        if text_or_id.startswith("cat_"):
+            category_key = text_or_id.replace("cat_", "")
+            session["current_category"] = category_key
+            session["stage"] = "browsing_category"
+            customer_sessions[sender] = session
+            from complete_order_flow import show_category_items_with_buttons
+            await show_category_items_with_buttons(sender, country_code, category_key, session)
+            return
+
+        # ===== ADD ITEM TO CART - Ask Quantity =====
+        if text_or_id.startswith("add_") and text_or_id.endswith("_qty"):
+            item_id = text_or_id.replace("add_", "").replace("_qty", "")
+
+            # Find item name and price
+            for category in menu["categories"].values():
+                if item_id in category["items"]:
+                    item = category["items"][item_id]
+                    from complete_order_flow import ask_quantity_for_item
+                    price_str = format_price(country_code, item["price"])
+                    await ask_quantity_for_item(sender, item_id, item["name"], price_str)
+                    return
+
+        # ===== SET QUANTITY & ADD TO CART =====
+        if text_or_id.startswith("qty_") and "_" in text_or_id:
+            parts = text_or_id.replace("qty_", "").rsplit("_", 1)
+            if len(parts) == 2:
+                item_id, qty_str = parts
+
+                if qty_str == "custom":
+                    # Ask for custom quantity
+                    session["pending_qty_item"] = item_id
+                    customer_sessions[sender] = session
+                    await send_text_message(sender, f"How many would you like? (type a number)")
+                    return
+
+                try:
+                    qty = int(qty_str)
+                    session["cart"][item_id] = session["cart"].get(item_id, 0) + qty
+                    customer_sessions[sender] = session
+
+                    # Find item name
+                    for category in menu["categories"].values():
+                        if item_id in category["items"]:
+                            item = category["items"][item_id]
+                            emoji = get_item_emoji(item["name"])
+                            await send_text_message(sender, f"✅ Added {qty}x {emoji} {item['name']} to cart!")
+
+                            # Show cart summary
+                            from complete_order_flow import show_cart_summary
+                            await show_cart_summary(sender, country_code, session)
+                            return
+                except ValueError:
+                    pass
+
+        # ===== DONE BROWSING CATEGORY =====
+        if text_or_id.startswith("done_category_"):
+            from complete_order_flow import show_cart_summary
+            await show_cart_summary(sender, country_code, session)
+            return
+
+        # ===== CART ACTIONS =====
+        if text_or_id == "cart_add_more":
+            await show_welcome(sender, country_code)
+            return
+
+        if text_or_id == "cart_checkout":
+            from complete_order_flow import ask_delivery_method_complete
+            await ask_delivery_method_complete(sender)
+            session["stage"] = "delivery_method"
+            customer_sessions[sender] = session
+            return
+
+        # ===== DELIVERY METHOD SELECTION =====
+        if text_or_id == "method_delivery":
+            session["delivery_type"] = "home"
+            session["stage"] = "address_input"
+            customer_sessions[sender] = session
+            await send_text_message(sender, "📍 Please share your address:\n\nFormat: House/Flat #, Street, Area, Landmark")
+            return
+
+        if text_or_id == "method_pickup":
+            session["delivery_type"] = "pickup"
+            session["stage"] = "confirm_order"
+            customer_sessions[sender] = session
+            from complete_order_flow import create_and_send_order
+            await create_and_send_order(sender, country_code, session)
+            session["stage"] = "order_complete"
+            customer_sessions[sender] = session
+            return
+
+        if text_or_id == "method_dinein":
+            session["delivery_type"] = "dinein"
+            session["stage"] = "table_input"
+            customer_sessions[sender] = session
+            await send_text_message(sender, "🍽️ Which table number are you at?")
+            return
+
+        # MODE SELECTION (legacy)
         if text_or_id.startswith("mode_single_"):
             category_key = text_or_id.replace("mode_single_", "")
             session["current_category"] = category_key
             session["browse_mode"] = "single"
             customer_sessions[sender] = session
-            # Show items in single mode (original flow)
             await show_items_single_mode(sender, country_code, category_key)
             return
 
@@ -824,17 +788,8 @@ Reply with number (1-10)"""
             session["current_category"] = category_key
             session["browse_mode"] = "catalog"
             customer_sessions[sender] = session
-            # Show catalog mode
             from catalog_view import show_catalog
             await show_catalog(sender, country_code, category_key)
-            return
-
-        # Category selection
-        if text_or_id.startswith("cat_"):
-            category_key = text_or_id.replace("cat_", "")
-            session["current_category"] = category_key
-            customer_sessions[sender] = session
-            await show_category_items(sender, country_code, category_key)
             return
 
         # Item selection from list
@@ -1089,7 +1044,7 @@ Try again! 📝""")
                 return
 
             item_id = session.get("pending_qty_item")
-            session["cart"][item_id] = qty
+            session["cart"][item_id] = session["cart"].get(item_id, 0) + qty
             session.pop("pending_qty_item", None)
             customer_sessions[sender] = session
 
@@ -1100,16 +1055,9 @@ Try again! 📝""")
                     msg = f"✅ Added {qty}x {emoji} {item['name']} to cart!"
                     await send_text_message(sender, msg)
 
-                    suggestions = get_smart_suggestions(item["name"])
-                    if suggestions:
-                        await send_interactive_buttons(
-                            sender,
-                            header_text="💡 ADD-ONS",
-                            body_text="Pair with popular additions",
-                            buttons=suggestions
-                        )
-
-                    await show_cart_with_total(sender, country_code, session["cart"], menu)
+                    # Show cart summary
+                    from complete_order_flow import show_cart_summary
+                    await show_cart_summary(sender, country_code, session)
                     return
         except ValueError:
             await send_text_message(sender, "❌ Please enter a valid number")
