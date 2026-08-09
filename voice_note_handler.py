@@ -5,15 +5,14 @@
 
 import os
 import requests
-from google import genai
-from google.genai import types
+import google.generativeai as genai
 from whatsapp_interactive import send_text_message
 
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
 PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-client = genai.Client(api_key=GEMINI_API_KEY)
+genai.configure(api_key=GEMINI_API_KEY)
 
 # ========================================
 # DOWNLOAD AUDIO FROM META SERVERS
@@ -136,20 +135,22 @@ If something else, answer appropriately.
 
 IMPORTANT: Respond in the language they used (Urdu or English)."""
 
-        # Call Gemini (this is synchronous, wrap in thread)
+        # Call Gemini with audio (this is synchronous, wrap in thread)
+        # The google.generativeai library supports binary data directly
+        model = genai.GenerativeModel("gemini-2.0-flash")
+
         response = await asyncio.to_thread(
-            client.models.generate_content,
-            model="gemini-2.0-flash",
-            contents=[
-                types.Part.from_bytes(
-                    data=audio_bytes,
-                    mime_type=mime_type  # e.g., "audio/ogg", "audio/mp3"
-                ),
+            model.generate_content,
+            [
+                {
+                    "mime_type": mime_type,
+                    "data": audio_bytes
+                },
                 system_prompt
             ]
         )
 
-        return response.text.strip()
+        return response.text.strip() if response else None
 
     except Exception as e:
         print(f"❌ Gemini API error: {e}")

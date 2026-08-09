@@ -7,12 +7,12 @@ import os
 import json
 import asyncio
 from typing import Dict, List, Optional
-from google import genai
+import google.generativeai as genai
 from menus_multi import get_menu, format_price
 from country_selector import COUNTRIES
 
 # Initialize Gemini Client
-client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 MODEL = "gemini-2.0-flash"  # Fast model for quick responses (gemini-2.5-flash deprecated)
 
 # ========================================
@@ -107,19 +107,10 @@ Estimated prep time: 20-25 minutes
 """
 
         # Call Gemini
+        model = genai.GenerativeModel(MODEL)
         response = await asyncio.to_thread(
-            client.models.generate_content,
-            model=MODEL,
-            contents=[
-                {
-                    "role": "user",
-                    "parts": [
-                        {
-                            "text": f"{SYSTEM_PROMPTS['order_summary']}\n\n{context}"
-                        }
-                    ]
-                }
-            ]
+            model.generate_content,
+            f"{SYSTEM_PROMPTS['order_summary']}\n\n{context}"
         )
 
         summary = response.text.strip()
@@ -195,19 +186,10 @@ Country: {COUNTRIES[country_code]['name']}
 """
 
         # Call Gemini
+        model = genai.GenerativeModel(MODEL)
         response = await asyncio.to_thread(
-            client.models.generate_content,
-            model=MODEL,
-            contents=[
-                {
-                    "role": "user",
-                    "parts": [
-                        {
-                            "text": f"{SYSTEM_PROMPTS['manager_alert']}\n\n{context}"
-                        }
-                    ]
-                }
-            ]
+            model.generate_content,
+            f"{SYSTEM_PROMPTS['manager_alert']}\n\n{context}"
         )
 
         alert = response.text.strip()
@@ -268,19 +250,10 @@ Suggest ONE complementary item from the add-ons list that would enhance this ord
 """
 
         # Call Gemini
+        model = genai.GenerativeModel(MODEL)
         response = await asyncio.to_thread(
-            client.models.generate_content,
-            model=MODEL,
-            contents=[
-                {
-                    "role": "user",
-                    "parts": [
-                        {
-                            "text": f"{SYSTEM_PROMPTS['upsell']}\n\n{context}"
-                        }
-                    ]
-                }
-            ]
+            model.generate_content,
+            f"{SYSTEM_PROMPTS['upsell']}\n\n{context}"
         )
 
         suggestion = response.text.strip()
@@ -327,19 +300,10 @@ Customer message: {user_message}
 {f'Context: {context}' if context else ''}
 """
 
+        model = genai.GenerativeModel(MODEL)
         response = await asyncio.to_thread(
-            client.models.generate_content,
-            model=MODEL,
-            contents=[
-                {
-                    "role": "user",
-                    "parts": [
-                        {
-                            "text": f"{SYSTEM_PROMPTS['customer_response']}\n\n{context_prompt}"
-                        }
-                    ]
-                }
-            ]
+            model.generate_content,
+            f"{SYSTEM_PROMPTS['customer_response']}\n\n{context_prompt}"
         )
 
         return response.text.strip()
@@ -397,19 +361,10 @@ Keep it under 100 words. Use emojis appropriately.
 
 {context}"""
 
+        model = genai.GenerativeModel(MODEL)
         response = await asyncio.to_thread(
-            client.models.generate_content,
-            model=MODEL,
-            contents=[
-                {
-                    "role": "user",
-                    "parts": [
-                        {
-                            "text": prompt
-                        }
-                    ]
-                }
-            ]
+            model.generate_content,
+            prompt
         )
 
         return response.text.strip()
