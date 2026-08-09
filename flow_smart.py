@@ -1,12 +1,13 @@
-# SMART FLOW - Gemini AI suggestions + proper message handling + complete cart + address + delivery
+# SMART FLOW v2 - Complete order system with manager approval, timing, returning customers
 import asyncio
+import time
+from datetime import datetime
 from menus_multi import get_country_from_phone, get_menu, format_price
 from country_selector import COUNTRIES
 from whatsapp_interactive import send_interactive_buttons, send_interactive_list, send_text_message
 from gemini_ai import get_ai_response
 from db import customer_sessions
 
-# Delivery settings per country
 DELIVERY_SETTINGS = {
     "PK": {"min_delivery": 500, "min_pickup": 200, "delivery_fee": 150, "free_above": 2000},
     "AE": {"min_delivery": 25, "min_pickup": 10, "delivery_fee": 8, "free_above": 75},
@@ -19,6 +20,10 @@ DELIVERY_SETTINGS = {
     "GB": {"min_delivery": 12, "min_pickup": 5, "delivery_fee": 3.99, "free_above": 40},
     "CA": {"min_delivery": 18, "min_pickup": 7, "delivery_fee": 5.99, "free_above": 60},
 }
+
+MANAGER_NUMBER = "923351021321"  # Update with actual manager number
+
+ITEMS_NEED_QUANTITY = ["naan", "roti", "roll", "burger", "karahi", "curry", "pizza", "kebab"]
 
 def get_delivery_charge(country_code, total):
     """Calculate delivery charge based on country and total"""
@@ -33,13 +38,10 @@ def validate_minimum_order(country_code, total, delivery_type):
     min_amount = settings["min_delivery"] if delivery_type == "home" else settings["min_pickup"]
     return total >= min_amount, min_amount
 
-CATEGORY_EMOJIS = {
-    "deals": "🔥", "biryani": "🍚", "karahi": "🍛", "bbq": "🍖",
-    "fish": "🐟", "sides": "🍟", "drinks": "🥤", "desserts": "🍰",
-    "mains": "🍚", "grills": "🍖", "shawarma": "🌯", "starters": "🥗",
-    "burgers": "🍔", "chicken": "🍗", "pizza": "🍕", "wraps": "🌯",
-    "bread": "🍞", "chinese": "🥢", "poutine": "🍟"
-}
+def needs_quantity_selection(item_name):
+    """Check if item needs qty selection"""
+    name_lower = item_name.lower()
+    return any(keyword in name_lower for keyword in ITEMS_NEED_QUANTITY)
 
 def get_item_emoji(item_name):
     """Get emoji for item"""
@@ -48,7 +50,7 @@ def get_item_emoji(item_name):
         "biryani": "🍚", "karahi": "🍛", "kebab": "🍖", "chicken": "🍗",
         "burger": "🍔", "pizza": "🍕", "fish": "🐟", "shake": "🥤",
         "lassi": "🥛", "naan": "🍞", "salad": "🥗", "fries": "🍟",
-        "cake": "🍰", "dessert": "🍰"
+        "cake": "🍰", "dessert": "🍰", "roll": "🌯", "roti": "🍞"
     }
     for keyword, emoji in emoji_map.items():
         if keyword in name_lower:
@@ -59,7 +61,6 @@ def get_smart_suggestions(item_name):
     """Get relevant suggestions based on item"""
     name_lower = item_name.lower()
 
-    # Biryani suggestions
     if "biryani" in name_lower or "rice" in name_lower:
         return [
             {"id": "upsell_raita", "title": "🥛 Raita"},
@@ -67,23 +68,20 @@ def get_smart_suggestions(item_name):
             {"id": "upsell_pickle", "title": "🌶️ Pickle"}
         ]
 
-    # Karahi suggestions
-    if "karahi" in name_lower or "curry" in name_lower:
+    if "karahi" in name_lower or "curry" in name_lower or "handi" in name_lower or "nihari" in name_lower:
         return [
             {"id": "upsell_naan", "title": "🍞 Naan"},
             {"id": "upsell_raita", "title": "🥛 Raita"},
             {"id": "upsell_bread", "title": "🍞 Roti"}
         ]
 
-    # Burger suggestions
     if "burger" in name_lower or "sandwich" in name_lower:
         return [
             {"id": "upsell_fries", "title": "🍟 Fries"},
-            {"id": "upsell_drink", "title": "🥤 Cold Drink"},
+            {"id": "upsell_drink", "title": "🥤 Drink"},
             {"id": "upsell_sauce", "title": "🌶️ Sauce"}
         ]
 
-    # Pizza suggestions
     if "pizza" in name_lower:
         return [
             {"id": "upsell_wings", "title": "🍗 Wings"},
@@ -91,11 +89,17 @@ def get_smart_suggestions(item_name):
             {"id": "upsell_dessert", "title": "🍰 Dessert"}
         ]
 
-    # Default suggestions (don't overuse)
+    if "roll" in name_lower or "wrap" in name_lower or "shawarma" in name_lower:
+        return [
+            {"id": "upsell_fries", "title": "🍟 Fries"},
+            {"id": "upsell_drink", "title": "🥤 Drink"},
+            {"id": "upsell_sauce", "title": "🌶️ Sauce"}
+        ]
+
     return None
 
 async def show_welcome(sender, country_code):
-    """Show welcome without extra message"""
+    """Show welcome menu"""
     country_info = COUNTRIES[country_code]
     menu = get_menu(country_code)
     categories = list(menu["categories"].items())
@@ -143,8 +147,37 @@ async def show_category_items(sender, country_code, category_key):
     await send_interactive_list(
         sender,
         header_text=f"📍 {category['name']}",
-        body_text="Tap to add to cart",
+        body_text="Tap to select",
         sections=sections
+    )
+
+async def show_quantity_and_proceed(sender, item_id, item_name):
+    """Show Quantity and Proceed buttons"""
+    buttons = [
+        {"id": f"qty_btn_{item_id}", "title": "📊 Quantity"},
+        {"id": "proceed_order", "title": "✅ Proceed"}
+    ]
+    await send_interactive_buttons(
+        sender,
+        header_text="NEXT STEP",
+        body_text="Adjust quantity or proceed to cart",
+        buttons=buttons
+    )
+
+async def show_quantity_list(sender, item_id):
+    """Show quantity list: 2x, 3x, 4x, 5x, 6x"""
+    buttons = [
+        {"id": f"qty_set_2_{item_id}", "title": "2x"},
+        {"id": f"qty_set_3_{item_id}", "title": "3x"},
+        {"id": f"qty_set_4_{item_id}", "title": "4x"},
+        {"id": f"qty_set_5_{item_id}", "title": "5x"},
+        {"id": f"qty_set_6_{item_id}", "title": "6x"}
+    ]
+    await send_interactive_buttons(
+        sender,
+        header_text="📊 SELECT QUANTITY",
+        body_text="How many would you like?",
+        buttons=buttons
     )
 
 async def show_cart_with_total(sender, country_code, cart, menu):
@@ -172,7 +205,7 @@ async def show_cart_with_total(sender, country_code, cart, menu):
             cart_text += f"❓ {item_id} ×{qty}\n\n"
 
     cart_text += f"{'='*40}\n"
-    cart_text += f"💰 TOTAL: {format_price(country_code, total)}\n"
+    cart_text += f"💰 SUBTOTAL: {format_price(country_code, total)}\n"
     cart_text += f"{'='*40}"
 
     await send_text_message(sender, cart_text)
@@ -185,27 +218,103 @@ async def show_cart_with_total(sender, country_code, cart, menu):
 
     await send_interactive_buttons(
         sender,
-        header_text="🛒 WHAT'S NEXT?",
-        body_text="Choose an action",
+        header_text="🛒 CART ACTIONS",
+        body_text="What's next?",
         buttons=buttons
     )
 
+async def send_to_manager(sender, country_code, cart, menu, address, delivery_type, payment_method):
+    """Send order to manager for approval"""
+    # Calculate totals
+    subtotal = sum(
+        menu["categories"][cat_key]["items"].get(item_id, {}).get("price", 0) * qty
+        for item_id, qty in cart.items()
+        for cat_key in menu["categories"].keys()
+        if item_id in menu["categories"][cat_key].get("items", {})
+    )
+
+    delivery_charge = get_delivery_charge(country_code, subtotal) if delivery_type == "home" else 0
+    final_total = subtotal + delivery_charge
+
+    # Build order bill
+    bill_text = f"""🆕 NEW ORDER - {COUNTRIES[country_code]['name']}
+
+📱 Customer: {sender}
+
+📊 ITEMS:
+"""
+    for item_id, qty in cart.items():
+        for cat in menu["categories"].values():
+            if item_id in cat["items"]:
+                item = cat["items"][item_id]
+                bill_text += f"• {qty}x {item['name']} = {format_price(country_code, item['price'] * qty)}\n"
+                break
+
+    bill_text += f"""
+💰 BREAKDOWN:
+Subtotal: {format_price(country_code, subtotal)}
+🚚 Delivery: {format_price(country_code, delivery_charge) if delivery_charge > 0 else 'FREE'}
+───────────────────
+💵 TOTAL: {format_price(country_code, final_total)}
+
+📍 Address: {address}
+🚗 Type: {'Home Delivery' if delivery_type == 'home' else 'Pickup'}
+💳 Payment: {payment_method}
+
+⏱️ Prep Time: 5 min
+🚚 Delivery: 2 min
+📋 TOTAL TIME: 7 min
+"""
+
+    await send_text_message(MANAGER_NUMBER, bill_text)
+
+    # Manager buttons
+    buttons = [
+        {"id": f"approve_{sender}", "title": "✅ Approve"},
+        {"id": f"reject_{sender}", "title": "❌ Reject"}
+    ]
+    await send_interactive_buttons(
+        MANAGER_NUMBER,
+        header_text="MANAGER ACTION NEEDED",
+        body_text=f"Customer: {sender}",
+        buttons=buttons
+    )
+
+    return final_total
+
 async def handle_smart_flow(sender, text_or_id, is_interactive=False):
-    """Complete smart flow with Gemini"""
+    """Main flow handler"""
 
     if sender not in customer_sessions:
         customer_sessions[sender] = {
             "country_code": None,
             "cart": {},
             "current_category": None,
-            "stage": "greeting"
+            "stage": "greeting",
+            "last_order": None,
+            "order_timestamp": None,
         }
 
     session = customer_sessions[sender]
     country_code = session.get("country_code")
     menu = get_menu(country_code) if country_code else None
 
-    # ========== STAGE 1: ADDRESS INPUT (PRIORITY) ==========
+    # ========== STAGE 1: PHONE NUMBER COLLECTION ==========
+    if session.get("stage") == "greeting" and not is_interactive and not session.get("phone_collected"):
+        session["phone_collected"] = True
+        session["customer_phone"] = sender
+        customer_sessions[sender] = session
+        await send_text_message(sender, f"✅ Number registered: {sender}\n\n📍 Detecting location...")
+
+        # Auto-detect country
+        detected = get_country_from_phone(sender)
+        session["country_code"] = detected
+        session["stage"] = "browsing"
+        customer_sessions[sender] = session
+        await show_welcome(sender, detected)
+        return
+
+    # ========== STAGE 2: ADDRESS INPUT (PRIORITY) ==========
     if session.get("stage") == "address_input" and not is_interactive:
         address = text_or_id.strip()
         if len(address) < 10:
@@ -216,22 +325,18 @@ async def handle_smart_flow(sender, text_or_id, is_interactive=False):
         session["stage"] = "payment_selection"
         customer_sessions[sender] = session
 
-        # Check minimum order
-        total = sum(menu["categories"][list(menu["categories"].keys())[0]]["items"].get(item_id, {}).get("price", 0) * qty
-                   for item_id, qty in session["cart"].items()
-                   for cat in menu["categories"].values() if item_id in cat["items"])
+        # Send to manager
+        total = await send_to_manager(
+            sender,
+            country_code,
+            session["cart"],
+            menu,
+            address,
+            session.get("delivery_type", "home"),
+            "Pending"
+        )
 
-        is_valid, min_amount = validate_minimum_order(country_code, total, "home")
-        if not is_valid:
-            msg = f"❌ Minimum delivery order: {format_price(country_code, min_amount)}\nYour cart: {format_price(country_code, total)}\n\nPlease add more items."
-            await send_text_message(sender, msg)
-            return
-
-        buttons = [
-            {"id": "payment_card", "title": "💳 Card"},
-            {"id": "payment_cod", "title": "💵 Cash"}
-        ]
-        await send_interactive_buttons(sender, "💰 PAYMENT", "Choose payment method", buttons)
+        await send_text_message(sender, f"📤 Order sent to manager...\n⏱️ Expected time: 7 minutes\n\n💰 Total: {format_price(country_code, total)}")
         return
 
     # ========== COMMANDS ==========
@@ -280,35 +385,13 @@ Reply with number (1-10)"""
             await show_category_items(sender, country_code, category_key)
             return
 
-        # Item selection
+        # Item selection from list
         found = False
         for cat_key, cat_data in menu["categories"].items():
             if text_or_id in cat_data.get("items", {}):
                 item = cat_data["items"][text_or_id]
 
-                # Check if item needs quantity selection (bread, naan, roti, etc.)
-                if item.get("quantity", False):
-                    # Store pending item and ask for quantity
-                    session["pending_item"] = text_or_id
-                    session["pending_item_name"] = item["name"]
-                    customer_sessions[sender] = session
-
-                    buttons = [
-                        {"id": f"qty_1_{text_or_id}", "title": "1x"},
-                        {"id": f"qty_2_{text_or_id}", "title": "2x"},
-                        {"id": f"qty_3_{text_or_id}", "title": "3x"},
-                        {"id": f"qty_more_{text_or_id}", "title": "More"}
-                    ]
-                    await send_interactive_buttons(
-                        sender,
-                        header_text="📊 QUANTITY",
-                        body_text=f"How many {item['name']}?",
-                        buttons=buttons
-                    )
-                    found = True
-                    break
-
-                # Regular item - add to cart
+                # Add 1x to cart
                 session["cart"][text_or_id] = session["cart"].get(text_or_id, 0) + 1
                 customer_sessions[sender] = session
 
@@ -316,7 +399,7 @@ Reply with number (1-10)"""
                 msg = f"✅ Added 1x {emoji} {item['name']} to cart!"
                 await send_text_message(sender, msg)
 
-                # Show smart suggestions if available
+                # Show smart suggestions
                 suggestions = get_smart_suggestions(item["name"])
                 if suggestions:
                     await send_interactive_buttons(
@@ -326,54 +409,76 @@ Reply with number (1-10)"""
                         buttons=suggestions
                     )
 
-                await show_cart_with_total(sender, country_code, session["cart"], menu)
+                # If needs quantity, show Quantity+Proceed buttons
+                if needs_quantity_selection(item["name"]):
+                    await show_quantity_and_proceed(sender, text_or_id, item["name"])
+                else:
+                    # Show cart directly
+                    await show_cart_with_total(sender, country_code, session["cart"], menu)
+
                 found = True
                 break
 
         if found:
             return
 
-        # Handle quantity selection for bread items
-        if text_or_id.startswith("qty_"):
+        # ===== QUANTITY BUTTONS =====
+        if text_or_id.startswith("qty_btn_"):
+            item_id = text_or_id.replace("qty_btn_", "")
+            await show_quantity_list(sender, item_id)
+            return
+
+        # ===== QUANTITY SET (2x, 3x, 4x, 5x, 6x) =====
+        if text_or_id.startswith("qty_set_"):
             parts = text_or_id.split("_")
             if len(parts) >= 3:
-                qty_action = parts[1]  # "1", "2", "3", or "more"
-                item_id = "_".join(parts[2:])  # Handle item IDs with underscores
+                new_qty = int(parts[2])
+                item_id = "_".join(parts[3:]) if len(parts) > 3 else parts[2]
 
-                if qty_action == "more":
-                    # User wants to specify custom quantity
-                    session["pending_item"] = item_id
-                    customer_sessions[sender] = session
-                    await send_text_message(sender, "📝 How many would you like? (type a number)")
-                    return
-
-                # Add to cart with quantity
-                qty = int(qty_action)
-                session["cart"][item_id] = session["cart"].get(item_id, 0) + qty
+                # Update cart to new quantity
+                session["cart"][item_id] = new_qty
                 customer_sessions[sender] = session
 
-                # Find item details for confirmation
+                # Find and show item
                 for cat_key, cat_data in menu["categories"].items():
                     if item_id in cat_data.get("items", {}):
                         item = cat_data["items"][item_id]
                         emoji = get_item_emoji(item["name"])
-                        msg = f"✅ Added {qty}x {emoji} {item['name']} to cart!"
-                        await send_text_message(sender, msg)
-
-                        # Show suggestions for bread items (raita, lassi, etc.)
-                        suggestions = get_smart_suggestions(item["name"])
-                        if suggestions:
-                            await send_interactive_buttons(
-                                sender,
-                                header_text="💡 ADD-ONS",
-                                body_text="Pair with popular additions",
-                                buttons=suggestions
-                            )
-
+                        await send_text_message(sender, f"✅ Updated to {new_qty}x {emoji} {item['name']}")
                         await show_cart_with_total(sender, country_code, session["cart"], menu)
                         return
 
-        # Cart actions
+        # ===== PROCEED BUTTON =====
+        if text_or_id == "proceed_order":
+            await show_cart_with_total(sender, country_code, session["cart"], menu)
+            return
+
+        # ===== UPSELL BUTTONS =====
+        if text_or_id.startswith("upsell_"):
+            # Find the item to add based on upsell ID
+            upsell_map = {
+                "upsell_raita": ("DR2", "Raita"),
+                "upsell_lassi": ("DR1", "Lassi"),
+                "upsell_pickle": ("SD", "Pickle"),
+                "upsell_naan": ("BD1", "Naan"),
+                "upsell_bread": ("BD6", "Roti"),
+                "upsell_fries": ("SD5", "Fries"),
+                "upsell_drink": ("DR1", "Drink"),
+                "upsell_sauce": ("SD", "Sauce"),
+                "upsell_wings": ("SD4", "Wings"),
+                "upsell_dessert": ("DS", "Dessert"),
+            }
+
+            if text_or_id in upsell_map:
+                item_id, item_name = upsell_map[text_or_id]
+                session["cart"][item_id] = session["cart"].get(item_id, 0) + 1
+                customer_sessions[sender] = session
+                emoji = get_item_emoji(item_name)
+                await send_text_message(sender, f"✅ Added 1x {emoji} {item_name}")
+                await show_cart_with_total(sender, country_code, session["cart"], menu)
+            return
+
+        # ===== CART ACTIONS =====
         if text_or_id == "cart_add_more":
             await show_welcome(sender, country_code)
             return
@@ -393,7 +498,7 @@ Reply with number (1-10)"""
             await show_welcome(sender, country_code)
             return
 
-        # Delivery selection
+        # ===== DELIVERY SELECTION =====
         if text_or_id == "delivery_home":
             session["delivery_type"] = "home"
             session["stage"] = "address_input"
@@ -411,9 +516,13 @@ House B-32, Block 4, Gulshan-e-Iqbal, near Mosque"""
             session["delivery_type"] = "pickup"
             customer_sessions[sender] = session
 
-            total = sum(menu["categories"][list(menu["categories"].keys())[0]]["items"].get(item_id, {}).get("price", 0) * qty
-                       for item_id, qty in session["cart"].items()
-                       for cat in menu["categories"].values() if item_id in cat["items"])
+            # Calculate total
+            total = sum(
+                menu["categories"][cat_key]["items"].get(item_id, {}).get("price", 0) * qty
+                for item_id, qty in session["cart"].items()
+                for cat_key in menu["categories"].keys()
+                if item_id in menu["categories"][cat_key].get("items", {})
+            )
 
             is_valid, min_amount = validate_minimum_order(country_code, total, "pickup")
             if not is_valid:
@@ -421,128 +530,8 @@ House B-32, Block 4, Gulshan-e-Iqbal, near Mosque"""
                 await send_text_message(sender, msg)
                 return
 
-            buttons = [
-                {"id": "payment_card", "title": "💳 Card"},
-                {"id": "payment_cod", "title": "💵 Cash"}
-            ]
-            await send_interactive_buttons(sender, "💰 PAYMENT", "Choose payment method", buttons)
+            # Send to manager
+            await send_to_manager(sender, country_code, session["cart"], menu, "Pickup", "pickup", "Pending")
+
+            await send_text_message(sender, f"📤 Order sent to manager...\n⏱️ Expected time: 5 minutes (pickup, no delivery)")
             return
-
-        # Payment selection
-        if text_or_id in ["payment_card", "payment_cod"]:
-            delivery = session.get("delivery_type", "home")
-            payment = "Card" if text_or_id == "payment_card" else "Cash on Delivery"
-
-            subtotal = 0
-            for item_id, qty in session["cart"].items():
-                for cat in menu["categories"].values():
-                    if item_id in cat["items"]:
-                        subtotal += cat["items"][item_id]["price"] * qty
-                        break
-
-            delivery_charge = get_delivery_charge(country_code, subtotal) if delivery == "home" else 0
-            final_total = subtotal + delivery_charge
-
-            address_line = f"📍 {session.get('address', 'Pickup')}" if delivery == "home" else "🏪 Restaurant Pickup"
-
-            msg = f"""
-✅ ORDER CONFIRMED!
-
-🏪 Wild Bites Restaurant
-📍 {COUNTRIES[country_code]['name']}
-
-📊 BREAKDOWN:
-Subtotal: {format_price(country_code, subtotal)}
-🚚 Delivery: {format_price(country_code, delivery_charge) if delivery_charge > 0 else 'FREE'}
-{'─' * 35}
-💰 TOTAL: {format_price(country_code, final_total)}
-
-{address_line}
-🚗 {'Home Delivery' if delivery == 'home' else 'Pickup'}
-💳 {payment}
-
-Thank you for your order! 🙏
-"""
-            await send_text_message(sender, msg)
-            session["cart"] = {}
-            session["stage"] = "completed"
-            customer_sessions[sender] = session
-            return
-
-    # ========== CUSTOM QUANTITY INPUT ==========
-    if session.get("pending_item") and not is_interactive and text_or_id.strip().isdigit():
-        item_id = session["pending_item"]
-        try:
-            qty = int(text_or_id.strip())
-            if qty <= 0:
-                await send_text_message(sender, "❌ Please enter a number greater than 0")
-                return
-
-            # Add to cart
-            session["cart"][item_id] = session["cart"].get(item_id, 0) + qty
-            session.pop("pending_item", None)
-            session.pop("pending_item_name", None)
-            customer_sessions[sender] = session
-
-            # Find item details
-            for cat_key, cat_data in menu["categories"].items():
-                if item_id in cat_data.get("items", {}):
-                    item = cat_data["items"][item_id]
-                    emoji = get_item_emoji(item["name"])
-                    msg = f"✅ Added {qty}x {emoji} {item['name']} to cart!"
-                    await send_text_message(sender, msg)
-
-                    suggestions = get_smart_suggestions(item["name"])
-                    if suggestions:
-                        await send_interactive_buttons(
-                            sender,
-                            header_text="💡 ADD-ONS",
-                            body_text="Pair with popular additions",
-                            buttons=suggestions
-                        )
-
-                    await show_cart_with_total(sender, country_code, session["cart"], menu)
-                    return
-        except ValueError:
-            await send_text_message(sender, "❌ Please enter a valid number")
-            return
-
-    # ========== TEXT INPUT WITH GEMINI SUGGESTIONS ==========
-    if not is_interactive and text_or_id.strip():
-        ai_msg = await get_ai_response(
-            sender,
-            text_or_id,
-            restaurant="Wild Bites",
-            lang="en",
-            menu="\n".join([f"• {cat['name']}" for cat in menu["categories"].values()])
-        )
-
-        if ai_msg and ai_msg.get("success"):
-            await send_text_message(sender, f"🤖 {ai_msg['message']}")
-
-            text_lower = text_or_id.lower()
-            suggestions = []
-
-            for cat_key, cat_data in menu["categories"].items():
-                cat_name_lower = cat_data["name"].lower()
-                if any(word in cat_name_lower for word in text_lower.split()):
-                    suggestions.append((cat_key, cat_data["name"]))
-
-            if suggestions:
-                rows = [
-                    {"id": f"cat_{key}", "title": name, "description": "Browse items"}
-                    for key, name in suggestions
-                ]
-                sections = [{"title": "💡 SUGGESTIONS", "rows": rows}]
-
-                await send_interactive_list(
-                    sender,
-                    header_text="📍 BASED ON YOUR REQUEST",
-                    body_text="Tap to browse",
-                    sections=sections
-                )
-            else:
-                await show_welcome(sender, country_code)
-        else:
-            await send_text_message(sender, "Sorry, didn't understand. Here's the menu:")
-            await show_welcome(sender, country_code)
