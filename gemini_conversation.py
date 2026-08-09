@@ -5,12 +5,12 @@
 
 import os
 import asyncio
-from google import genai
+import google.generativeai as genai
 from menus_multi import get_menu, get_country_from_phone
 from whatsapp_interactive import send_text_message
 
-client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-MODEL = "gemini-2.0-flash"
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+MODEL = "gemini-1.5-flash"
 
 # ========================================
 # INTENT CLASSIFICATION
@@ -54,10 +54,10 @@ Respond ONLY with JSON:
 }}
 """
 
+        model = genai.GenerativeModel(MODEL)
         response = await asyncio.to_thread(
-            client.models.generate_content,
-            model=MODEL,
-            contents=prompt
+            model.generate_content,
+            prompt
         )
 
         import json
@@ -131,10 +131,10 @@ Generate a HELPFUL, FRIENDLY response:
 Response:
 """
 
+        model = genai.GenerativeModel(MODEL)
         response = await asyncio.to_thread(
-            client.models.generate_content,
-            model=MODEL,
-            contents=prompt
+            model.generate_content,
+            prompt
         )
 
         return response.text.strip()
@@ -186,10 +186,10 @@ Format: ID1, ID2, ID3
 Only return item IDs, nothing else.
 """
 
+        model = genai.GenerativeModel(MODEL)
         response = await asyncio.to_thread(
-            client.models.generate_content,
-            model=MODEL,
-            contents=prompt
+            model.generate_content,
+            prompt
         )
 
         # Parse response
