@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from config import VERIFY_TOKEN
-from flow_complete import handle_complete_flow
+from flow_smart import handle_smart_flow
 
 app = FastAPI()
 
@@ -52,7 +52,7 @@ async def handle_webhook(request: Request):
             if msg_type == "text":
                 text = message.get("text", {}).get("body", "").strip()
                 print(f"   Text: {text}")
-                await handle_complete_flow(sender, text, is_interactive=False)
+                await handle_smart_flow(sender, text, is_interactive=False)
 
             # Interactive messages (buttons/lists)
             elif msg_type == "interactive":
@@ -64,13 +64,13 @@ async def handle_webhook(request: Request):
                     button_id = button_reply.get("id")
                     print(f"   Button: {button_id}")
                     if button_id:
-                        await handle_complete_flow(sender, button_id, is_interactive=True)
+                        await handle_smart_flow(sender, button_id, is_interactive=True)
 
                 elif list_reply:
                     item_id = list_reply.get("id")
                     print(f"   List Item: {item_id}")
                     if item_id:
-                        await handle_complete_flow(sender, item_id, is_interactive=True)
+                        await handle_smart_flow(sender, item_id, is_interactive=True)
 
         return {"status": "ok"}
 
