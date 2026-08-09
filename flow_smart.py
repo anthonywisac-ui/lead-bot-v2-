@@ -29,6 +29,22 @@ PREP_TIME = 300  # 5 minutes
 DELIVERY_TIME = 120  # 2 minutes
 TOTAL_TIME = 420  # 7 minutes
 
+# Image URLs (GitHub hosted)
+GITHUB_IMAGES = {
+    "deals": "https://raw.githubusercontent.com/anthonywisac-ui/lead-bot-v2-/main/images/deals-image.png",
+    "biryani": "https://raw.githubusercontent.com/anthonywisac-ui/lead-bot-v2-/main/images/deals-image.png",  # Default to deals
+    "karahi": "https://raw.githubusercontent.com/anthonywisac-ui/lead-bot-v2-/main/images/karhai-image.png",
+    "bbq": "https://raw.githubusercontent.com/anthonywisac-ui/lead-bot-v2-/main/images/deals-image.png",
+    "rolls": "https://raw.githubusercontent.com/anthonywisac-ui/lead-bot-v2-/main/images/deals-image.png",
+    "chinese": "https://raw.githubusercontent.com/anthonywisac-ui/lead-bot-v2-/main/images/deals-image.png",
+    "bread": "https://raw.githubusercontent.com/anthonywisac-ui/lead-bot-v2-/main/images/deals-image.png",
+    "sides": "https://raw.githubusercontent.com/anthonywisac-ui/lead-bot-v2-/main/images/deals-image.png",
+    "drinks": "https://raw.githubusercontent.com/anthonywisac-ui/lead-bot-v2-/main/images/deals-image.png",
+    "desserts": "https://raw.githubusercontent.com/anthonywisac-ui/lead-bot-v2-/main/images/deals-image.png",
+}
+
+WELCOME_IMAGE = "https://raw.githubusercontent.com/anthonywisac-ui/lead-bot-v2-/main/images/Welcome-image.png"
+
 def get_delivery_charge(country_code, total):
     """Calculate delivery charge based on country and total"""
     settings = DELIVERY_SETTINGS.get(country_code, DELIVERY_SETTINGS["PK"])
@@ -238,10 +254,15 @@ We hope you enjoyed it!
         update_order_status(order_id, "delivered")
 
 async def show_welcome(sender, country_code):
-    """Show welcome menu"""
+    """Show welcome menu with image"""
+    from whatsapp_interactive import send_image_with_caption
+
     country_info = COUNTRIES[country_code]
     menu = get_menu(country_code)
     categories = list(menu["categories"].items())
+
+    # Send welcome image
+    await send_image_with_caption(sender, WELCOME_IMAGE, "Welcome to Wild Bites! 🍽️")
 
     rows = [
         {
@@ -273,7 +294,9 @@ Commands:
     )
 
 async def show_category_items(sender, country_code, category_key):
-    """Show items in category"""
+    """Show items in category with image"""
+    from whatsapp_interactive import send_image_with_caption
+
     menu = get_menu(country_code)
 
     if category_key not in menu["categories"]:
@@ -282,6 +305,11 @@ async def show_category_items(sender, country_code, category_key):
 
     category = menu["categories"][category_key]
     items = category["items"]
+
+    # Send category image if available
+    image_url = GITHUB_IMAGES.get(category_key)
+    if image_url:
+        await send_image_with_caption(sender, image_url, f"📸 {category['name']} Menu")
 
     rows = []
     for item_id, item in items.items():
