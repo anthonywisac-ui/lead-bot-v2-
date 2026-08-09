@@ -6,6 +6,33 @@ from whatsapp_interactive import send_interactive_buttons, send_interactive_list
 from gemini_ai import get_ai_response
 from db import customer_sessions
 
+# Delivery settings per country
+DELIVERY_SETTINGS = {
+    "PK": {"min_delivery": 500, "min_pickup": 200, "delivery_fee": 150, "free_above": 2000},
+    "AE": {"min_delivery": 25, "min_pickup": 10, "delivery_fee": 8, "free_above": 75},
+    "SA": {"min_delivery": 30, "min_pickup": 15, "delivery_fee": 10, "free_above": 80},
+    "QA": {"min_delivery": 40, "min_pickup": 20, "delivery_fee": 12, "free_above": 100},
+    "KW": {"min_delivery": 3.5, "min_pickup": 1.5, "delivery_fee": 1, "free_above": 10},
+    "BH": {"min_delivery": 4, "min_pickup": 2, "delivery_fee": 1.2, "free_above": 12},
+    "OM": {"min_delivery": 3, "min_pickup": 1.5, "delivery_fee": 0.9, "free_above": 9},
+    "US": {"min_delivery": 15, "min_pickup": 5, "delivery_fee": 4.99, "free_above": 50},
+    "GB": {"min_delivery": 12, "min_pickup": 5, "delivery_fee": 3.99, "free_above": 40},
+    "CA": {"min_delivery": 18, "min_pickup": 7, "delivery_fee": 5.99, "free_above": 60},
+}
+
+def get_delivery_charge(country_code, total):
+    """Calculate delivery charge based on country and total"""
+    settings = DELIVERY_SETTINGS.get(country_code, DELIVERY_SETTINGS["PK"])
+    if total >= settings["free_above"]:
+        return 0
+    return settings["delivery_fee"]
+
+def validate_minimum_order(country_code, total, delivery_type):
+    """Check if order meets minimum"""
+    settings = DELIVERY_SETTINGS.get(country_code, DELIVERY_SETTINGS["PK"])
+    min_amount = settings["min_delivery"] if delivery_type == "home" else settings["min_pickup"]
+    return total >= min_amount, min_amount
+
 CATEGORY_EMOJIS = {
     "deals": "🔥", "biryani": "🍚", "karahi": "🍛", "bbq": "🍖",
     "fish": "🐟", "sides": "🍟", "drinks": "🥤", "desserts": "🍰",
@@ -250,7 +277,26 @@ Reply with number (1-10)"""
         # Delivery
         if text_or_id == "delivery_home":
             session["delivery_type"] = "home"
+            session["stage"] = "address_input"
             customer_sessions[sender] = session
+            await send_text_message(sender, "📍 Please provide your delivery address:\n\n(e.g., House 123, Street Name, City)")
+            return
+
+        if text_or_id == "delivery_pickup":
+            session["delivery_type"] = "pickup"
+            customer_sessions[sender] = session
+
+            # Check minimum order for pickup
+            total = sum(menu["categories"][list(menu["categories"].keys())[0]]["items"].get(item_id, {}).get("price", 0) * qty
+                       for item_id, qty in session["cart"].items()
+                       for cat in menu["categories"].values() if item_id in cat["items"])
+
+            is_valid, min_amount = validate_minimum_order(country_code, total, "pickup")
+            if not is_valid:
+                msg = f"❌ Minimum pickup order: {format_price(country_code, min_amount)}\nYour cart: {format_price(country_code, total)}\n\nPlease add more items."
+                await send_text_message(sender, msg)
+                return
+
             buttons = [
                 {"id": "payment_card", "title": "💳 Card"},
                 {"id": "payment_cod", "title": "💵 Cash"}
@@ -258,9 +304,29 @@ Reply with number (1-10)"""
             await send_interactive_buttons(sender, "💰 PAYMENT", "Choose payment method", buttons)
             return
 
-        if text_or_id == "delivery_pickup":
-            session["delivery_type"] = "pickup"
+        # Handle address input for home delivery
+        if session.get("stage") == "address_input" and not is_interactive:
+            address = text_or_id.strip()
+            if len(address) < 5:
+                await send_text_message(sender, "❌ Address too short. Please provide complete address.")
+                return
+
+            session["address"] = address
+            session["stage"] = "payment_selection"
             customer_sessions[sender] = session
+
+            # Check minimum order
+            total = sum(menu["categories"][list(menu["categories"].keys())[0]]["items"].get(item_id, {}).get("price", 0) * qty
+                       for item_id, qty in session["cart"].items()
+                       for cat in menu["categories"].values() if item_id in cat["items"])
+
+            is_valid, min_amount = validate_minimum_order(country_code, total, "home")
+            if not is_valid:
+                msg = f"❌ Minimum delivery order: {format_price(country_code, min_amount)}\nYour cart: {format_price(country_code, total)}\n\nPlease add more items."
+                await send_text_message(sender, msg)
+                return
+
+            # Show payment options
             buttons = [
                 {"id": "payment_card", "title": "💳 Card"},
                 {"id": "payment_cod", "title": "💵 Cash"}
@@ -274,27 +340,40 @@ Reply with number (1-10)"""
             payment = "Card" if text_or_id == "payment_card" else "Cash on Delivery"
 
             # Calculate total
-            total = 0
+            subtotal = 0
             for item_id, qty in session["cart"].items():
                 for cat in menu["categories"].values():
                     if item_id in cat["items"]:
-                        total += cat["items"][item_id]["price"] * qty
+                        subtotal += cat["items"][item_id]["price"] * qty
                         break
+
+            # Add delivery charge
+            delivery_charge = get_delivery_charge(country_code, subtotal) if delivery == "home" else 0
+            final_total = subtotal + delivery_charge
+
+            address_line = f"📍 {session.get('address', 'Pickup')}" if delivery == "home" else "🏪 Pickup"
 
             msg = f"""
 ✅ ORDER CONFIRMED!
 
 🏪 Wild Bites Restaurant
-📍 {COUNTRIES[country_code]['name']}
+{COUNTRIES[country_code]['name']}
 
-💰 Total: {format_price(country_code, total)}
-🚗 Delivery: {'Home' if delivery == 'home' else 'Pickup'}
-💳 Payment: {payment}
+📊 SUMMARY:
+Subtotal: {format_price(country_code, subtotal)}
+🚚 Delivery: {format_price(country_code, delivery_charge) if delivery_charge > 0 else 'FREE'}
+{'─' * 35}
+💰 TOTAL: {format_price(country_code, final_total)}
+
+{address_line}
+🚗 {'Home Delivery' if delivery == 'home' else 'Pickup'}
+💳 {payment}
 
 Thank you for your order! 🙏
 """
             await send_text_message(sender, msg)
             session["cart"] = {}
+            session["stage"] = "completed"
             customer_sessions[sender] = session
             return
 
