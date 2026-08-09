@@ -72,6 +72,9 @@ async def handle_webhook(request: Request):
                         elif button_id.startswith("reject_"):
                             customer = button_id.replace("reject_", "")
                             await handle_manager_approval(sender, "reject", customer)
+                        elif button_id.startswith("status_"):
+                            # Manager status update - pass to flow_smart
+                            await handle_smart_flow(sender, button_id, is_interactive=True)
                         else:
                             # Regular customer flow
                             await handle_smart_flow(sender, button_id, is_interactive=True)

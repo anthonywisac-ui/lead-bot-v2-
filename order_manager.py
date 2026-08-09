@@ -2,7 +2,7 @@
 import time
 from datetime import datetime
 from whatsapp_interactive import send_interactive_buttons, send_text_message
-from menus_multi import format_price
+from menus_multi import format_price, get_menu
 
 # Order storage
 orders = {}  # {order_id: {customer, cart, menu, total, timestamp, status, manager_response, ...}}
