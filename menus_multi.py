@@ -82,12 +82,12 @@ MENUS = {
             "bread": {
                 "name": "🍞 Naan & Bread",
                 "items": {
-                    "BR1": {"name": "Plain Naan", "price": 100, "desc": "Simple naan"},
-                    "BR2": {"name": "Garlic Naan", "price": 180, "desc": "Garlic flavored"},
-                    "BR3": {"name": "Butter Naan", "price": 180, "desc": "Buttery naan"},
-                    "BR4": {"name": "Cheese Naan", "price": 350, "desc": "Cheese stuffed"},
-                    "BR5": {"name": "Roghni Naan", "price": 200, "desc": "Oil brushed naan"},
-                    "BR6": {"name": "Tandoori Roti", "price": 70, "desc": "Whole wheat roti"},
+                    "BD1": {"name": "Plain Naan", "price": 100, "desc": "Simple naan", "quantity": True},
+                    "BD2": {"name": "Garlic Naan", "price": 180, "desc": "Garlic flavored", "quantity": True},
+                    "BD3": {"name": "Butter Naan", "price": 180, "desc": "Buttery naan", "quantity": True},
+                    "BD4": {"name": "Cheese Naan", "price": 350, "desc": "Cheese stuffed", "quantity": True},
+                    "BD5": {"name": "Roghni Naan", "price": 200, "desc": "Oil brushed naan", "quantity": True},
+                    "BD6": {"name": "Tandoori Roti", "price": 70, "desc": "Whole wheat roti", "quantity": True},
                 }
             },
             "sides": {
@@ -203,12 +203,12 @@ MENUS = {
             "bread": {
                 "name": "🍞 Bread & Sides",
                 "items": {
-                    "BR1": {"name": "Naan", "price": 5, "desc": "Plain naan"},
-                    "BR2": {"name": "Garlic Naan", "price": 7, "desc": "Garlic naan"},
-                    "BR3": {"name": "Arabic Bread", "price": 3, "desc": "Pita bread"},
-                    "BR4": {"name": "French Fries", "price": 10, "desc": "Crispy fries"},
-                    "BR5": {"name": "Masala Fries", "price": 14, "desc": "Spiced fries"},
-                    "BR6": {"name": "Onion Rings", "price": 14, "desc": "Fried onions"},
+                    "BD1": {"name": "Naan", "price": 5, "desc": "Plain naan", "quantity": True},
+                    "BD2": {"name": "Garlic Naan", "price": 7, "desc": "Garlic naan", "quantity": True},
+                    "BD3": {"name": "Arabic Bread", "price": 3, "desc": "Pita bread", "quantity": True},
+                    "BD4": {"name": "French Fries", "price": 10, "desc": "Crispy fries"},
+                    "BD5": {"name": "Masala Fries", "price": 14, "desc": "Spiced fries"},
+                    "BD6": {"name": "Onion Rings", "price": 14, "desc": "Fried onions"},
                 }
             },
             "drinks": {

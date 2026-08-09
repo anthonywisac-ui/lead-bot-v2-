@@ -285,6 +285,30 @@ Reply with number (1-10)"""
         for cat_key, cat_data in menu["categories"].items():
             if text_or_id in cat_data.get("items", {}):
                 item = cat_data["items"][text_or_id]
+
+                # Check if item needs quantity selection (bread, naan, roti, etc.)
+                if item.get("quantity", False):
+                    # Store pending item and ask for quantity
+                    session["pending_item"] = text_or_id
+                    session["pending_item_name"] = item["name"]
+                    customer_sessions[sender] = session
+
+                    buttons = [
+                        {"id": f"qty_1_{text_or_id}", "title": "1x"},
+                        {"id": f"qty_2_{text_or_id}", "title": "2x"},
+                        {"id": f"qty_3_{text_or_id}", "title": "3x"},
+                        {"id": f"qty_more_{text_or_id}", "title": "More"}
+                    ]
+                    await send_interactive_buttons(
+                        sender,
+                        header_text="📊 QUANTITY",
+                        body_text=f"How many {item['name']}?",
+                        buttons=buttons
+                    )
+                    found = True
+                    break
+
+                # Regular item - add to cart
                 session["cart"][text_or_id] = session["cart"].get(text_or_id, 0) + 1
                 customer_sessions[sender] = session
 
@@ -308,6 +332,46 @@ Reply with number (1-10)"""
 
         if found:
             return
+
+        # Handle quantity selection for bread items
+        if text_or_id.startswith("qty_"):
+            parts = text_or_id.split("_")
+            if len(parts) >= 3:
+                qty_action = parts[1]  # "1", "2", "3", or "more"
+                item_id = "_".join(parts[2:])  # Handle item IDs with underscores
+
+                if qty_action == "more":
+                    # User wants to specify custom quantity
+                    session["pending_item"] = item_id
+                    customer_sessions[sender] = session
+                    await send_text_message(sender, "📝 How many would you like? (type a number)")
+                    return
+
+                # Add to cart with quantity
+                qty = int(qty_action)
+                session["cart"][item_id] = session["cart"].get(item_id, 0) + qty
+                customer_sessions[sender] = session
+
+                # Find item details for confirmation
+                for cat_key, cat_data in menu["categories"].items():
+                    if item_id in cat_data.get("items", {}):
+                        item = cat_data["items"][item_id]
+                        emoji = get_item_emoji(item["name"])
+                        msg = f"✅ Added {qty}x {emoji} {item['name']} to cart!"
+                        await send_text_message(sender, msg)
+
+                        # Show suggestions for bread items (raita, lassi, etc.)
+                        suggestions = get_smart_suggestions(item["name"])
+                        if suggestions:
+                            await send_interactive_buttons(
+                                sender,
+                                header_text="💡 ADD-ONS",
+                                body_text="Pair with popular additions",
+                                buttons=suggestions
+                            )
+
+                        await show_cart_with_total(sender, country_code, session["cart"], menu)
+                        return
 
         # Cart actions
         if text_or_id == "cart_add_more":
@@ -403,6 +467,44 @@ Thank you for your order! 🙏
             session["cart"] = {}
             session["stage"] = "completed"
             customer_sessions[sender] = session
+            return
+
+    # ========== CUSTOM QUANTITY INPUT ==========
+    if session.get("pending_item") and not is_interactive and text_or_id.strip().isdigit():
+        item_id = session["pending_item"]
+        try:
+            qty = int(text_or_id.strip())
+            if qty <= 0:
+                await send_text_message(sender, "❌ Please enter a number greater than 0")
+                return
+
+            # Add to cart
+            session["cart"][item_id] = session["cart"].get(item_id, 0) + qty
+            session.pop("pending_item", None)
+            session.pop("pending_item_name", None)
+            customer_sessions[sender] = session
+
+            # Find item details
+            for cat_key, cat_data in menu["categories"].items():
+                if item_id in cat_data.get("items", {}):
+                    item = cat_data["items"][item_id]
+                    emoji = get_item_emoji(item["name"])
+                    msg = f"✅ Added {qty}x {emoji} {item['name']} to cart!"
+                    await send_text_message(sender, msg)
+
+                    suggestions = get_smart_suggestions(item["name"])
+                    if suggestions:
+                        await send_interactive_buttons(
+                            sender,
+                            header_text="💡 ADD-ONS",
+                            body_text="Pair with popular additions",
+                            buttons=suggestions
+                        )
+
+                    await show_cart_with_total(sender, country_code, session["cart"], menu)
+                    return
+        except ValueError:
+            await send_text_message(sender, "❌ Please enter a valid number")
             return
 
     # ========== TEXT INPUT WITH GEMINI SUGGESTIONS ==========
