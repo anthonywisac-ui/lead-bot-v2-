@@ -13,7 +13,7 @@ from country_selector import COUNTRIES
 
 # Initialize Gemini Client
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-MODEL = "gemini-2.5-flash"  # Fast model for quick responses
+MODEL = "gemini-2.0-flash"  # Fast model for quick responses (gemini-2.5-flash deprecated)
 
 # ========================================
 # GEMINI CONFIGURATION

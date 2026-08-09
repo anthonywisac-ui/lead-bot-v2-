@@ -10,7 +10,7 @@ from menus_multi import get_menu, get_country_from_phone
 from whatsapp_interactive import send_text_message
 
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-MODEL = "gemini-2.5-flash"
+MODEL = "gemini-2.0-flash"  # Updated: gemini-2.5-flash deprecated
 
 # ========================================
 # INTENT CLASSIFICATION

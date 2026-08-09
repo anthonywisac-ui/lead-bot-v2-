@@ -11,7 +11,16 @@ async def send_interactive_buttons(phone, header_text, body_text, buttons, foote
         {"id": "btn1", "title": "Option 1"},
         {"id": "btn2", "title": "Option 2"}
     ]
+
+    WhatsApp Limits:
+    - Button title: max 20 characters
+    - Header text: max 60 characters
+    - Body text: max 1024 characters
     """
+    # Enforce WhatsApp character limits
+    safe_header = header_text[:60]
+    safe_body = body_text[:1024]
+
     payload = {
         "messaging_product": "whatsapp",
         "to": phone,
@@ -20,10 +29,10 @@ async def send_interactive_buttons(phone, header_text, body_text, buttons, foote
             "type": "button",
             "header": {
                 "type": "text",
-                "text": header_text
+                "text": safe_header
             },
             "body": {
-                "text": body_text
+                "text": safe_body
             },
             "action": {
                 "buttons": [
@@ -31,7 +40,7 @@ async def send_interactive_buttons(phone, header_text, body_text, buttons, foote
                         "type": "reply",
                         "reply": {
                             "id": btn["id"],
-                            "title": btn["title"]
+                            "title": btn["title"][:20]  # Max 20 chars per WhatsApp
                         }
                     }
                     for btn in buttons[:3]  # Max 3 buttons
@@ -74,7 +83,34 @@ async def send_interactive_list(phone, header_text, body_text, sections, footer_
             ]
         }
     ]
+
+    WhatsApp Limits:
+    - Row title: max 24 characters
+    - Row description: max 72 characters
+    - Section title: max 24 characters
+    - Header text: max 60 characters
+    - Body text: max 1024 characters
     """
+    # Enforce WhatsApp character limits
+    safe_header = header_text[:60]
+    safe_body = body_text[:1024]
+
+    # Trim section and row titles/descriptions
+    safe_sections = []
+    for section in sections:
+        safe_section = {
+            "title": section.get("title", "")[:24],  # Max 24 chars
+            "rows": [
+                {
+                    "id": row["id"],
+                    "title": row.get("title", "")[:24],  # Max 24 chars - CRITICAL FIX
+                    "description": row.get("description", "")[:72]  # Max 72 chars
+                }
+                for row in section.get("rows", [])
+            ]
+        }
+        safe_sections.append(safe_section)
+
     payload = {
         "messaging_product": "whatsapp",
         "to": phone,
@@ -83,14 +119,14 @@ async def send_interactive_list(phone, header_text, body_text, sections, footer_
             "type": "list",
             "header": {
                 "type": "text",
-                "text": header_text
+                "text": safe_header
             },
             "body": {
-                "text": body_text
+                "text": safe_body
             },
             "action": {
                 "button": "SELECT ITEM",
-                "sections": sections
+                "sections": safe_sections
             }
         }
     }

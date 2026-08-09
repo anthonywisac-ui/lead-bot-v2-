@@ -49,6 +49,13 @@ async def handle_webhook(request: Request):
 
             print(f"\n📨 Message from {sender}")
 
+            # Voice Note / Audio Messages
+            if msg_type == "audio":
+                print(f"   🎤 Voice note received")
+                from voice_note_handler import handle_voice_message
+                await handle_voice_message(sender, message)
+                continue
+
             # Text messages
             if msg_type == "text":
                 text = message.get("text", {}).get("body", "").strip()
