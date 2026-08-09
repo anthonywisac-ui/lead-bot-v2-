@@ -106,9 +106,15 @@ async def health_check():
 
 # ==================== RUN ====================
 if __name__ == "__main__":
+    import sys
+    # Fix encoding for Windows
+    if sys.platform == "win32":
+        import io
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+
     port = int(os.getenv("PORT", "8000"))
-    print(f"\n🚀 Wild Bites Restaurant Bot starting on port {port}...")
-    print(f"✅ Multi-country system ready")
-    print(f"✅ Button-based menu ready")
-    print(f"✅ Images integrated\n")
+    print(f"\n[STARTING] Wild Bites Restaurant Bot on port {port}...")
+    print(f"[OK] Multi-country system ready")
+    print(f"[OK] Button-based menu ready")
+    print(f"[OK] Shortcode system active\n")
     uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
