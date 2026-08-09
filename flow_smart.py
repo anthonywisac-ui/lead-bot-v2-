@@ -469,13 +469,42 @@ async def handle_smart_flow(sender, text_or_id, is_interactive=False):
             "last_order": None,
             "order_timestamp": None,
             "customer_name": None,
-            "customer_type": None,  # "client", "new", "returning"
-            "manager_number": MANAGER_NUMBER,  # Default manager, can be overridden
+            "customer_type": None,
+            "manager_number": MANAGER_NUMBER,
+            "last_activity": time.time(),
         }
+
+    # ========== SESSION TIMEOUT: Reset after 10 minutes ==========
+    session = customer_sessions[sender]
+    current_time = time.time()
+    last_activity = session.get("last_activity", current_time)
+
+    # Update last activity
+    session["last_activity"] = current_time
+    customer_sessions[sender] = session
+
+    # If 10 minutes passed, reset session to allow new conversation
+    if (current_time - last_activity) > 600:
+        session["stage"] = "greeting"
+        session["cart"] = {}
+        session["current_category"] = None
+        session["customer_type"] = None
+        customer_sessions[sender] = session
 
     session = customer_sessions[sender]
     country_code = session.get("country_code")
     menu = get_menu(country_code) if country_code else None
+
+    # ========== RESET SESSION ON KEYWORDS ==========
+    # Allow user to restart conversation with keywords: new, hi, client, etc
+    reset_keywords = ["new", "hi", "hello", "client", "salam", "assalam", "hola", "start", "begin"]
+    if not is_interactive and text_or_id.lower().strip() in reset_keywords:
+        # Reset to greeting stage to allow restart
+        session["stage"] = "greeting"
+        session["cart"] = {}
+        session["current_category"] = None
+        session["pending_qty_item"] = None
+        customer_sessions[sender] = session
 
     # ========== SMART DETECTION: Auto-detect customer type & preferences ==========
     if session.get("stage") == "greeting" and not is_interactive:
