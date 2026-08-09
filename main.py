@@ -95,7 +95,7 @@ async def process_message(sender: str, text: str):
 async def send_message(phone_number: str, message: str):
     """Send text message via WhatsApp Business API"""
     try:
-        url = f"https://graph.instagram.com/v18.0/{WHATSAPP_PHONE_ID}/messages"
+        url = f"https://graph.facebook.com/v18.0/{WHATSAPP_PHONE_ID}/messages"
 
         headers = {
             "Authorization": WHATSAPP_TOKEN,
@@ -131,7 +131,7 @@ async def send_message(phone_number: str, message: str):
 async def send_interactive_menu(phone_number: str):
     """Send interactive menu with buttons"""
     try:
-        url = f"https://graph.instagram.com/v18.0/{WHATSAPP_PHONE_ID}/messages"
+        url = f"https://graph.facebook.com/v18.0/{WHATSAPP_PHONE_ID}/messages"
 
         headers = {
             "Authorization": WHATSAPP_TOKEN,
