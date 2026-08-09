@@ -254,35 +254,11 @@ We hope you enjoyed it!
         update_order_status(order_id, "delivered")
 
 async def show_welcome(sender, country_code):
-    """Show welcome menu with image"""
-    from whatsapp_interactive import send_image_with_caption
+    """Show welcome with WhatsApp native catalog"""
+    from whatsapp_native_catalog_handler import greeting_flow
 
-    country_info = COUNTRIES[country_code]
-    menu = get_menu(country_code)
-    categories = list(menu["categories"].items())
-
-    # Send welcome image
-    await send_image_with_caption(sender, WELCOME_IMAGE, "")
-
-    rows = [
-        {
-            "id": f"cat_{key}",
-            "title": data["name"],
-            "description": f"{len(data['items'])} items"
-        }
-        for key, data in categories
-    ]
-
-    sections = [{"title": "🍽️ SELECT CATEGORY", "rows": rows}]
-
-    body_text = f"📍 {country_info['name']} | {country_info['currency']}"
-
-    await send_interactive_list(
-        sender,
-        header_text="👋 Welcome to Wild Bites!",
-        body_text=body_text,
-        sections=sections
-    )
+    # Use WhatsApp's native beautiful catalog instead of custom buttons
+    await greeting_flow(sender, country_code, {})
 
 async def show_items_single_mode(sender, country_code, category_key):
     """Show items one by one - traditional single item mode"""
