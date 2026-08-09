@@ -55,6 +55,45 @@ def get_item_emoji(item_name):
             return emoji
     return "🍲"
 
+def get_smart_suggestions(item_name):
+    """Get relevant suggestions based on item"""
+    name_lower = item_name.lower()
+
+    # Biryani suggestions
+    if "biryani" in name_lower or "rice" in name_lower:
+        return [
+            {"id": "upsell_raita", "title": "🥛 Raita"},
+            {"id": "upsell_lassi", "title": "🥛 Lassi"},
+            {"id": "upsell_pickle", "title": "🌶️ Pickle"}
+        ]
+
+    # Karahi suggestions
+    if "karahi" in name_lower or "curry" in name_lower:
+        return [
+            {"id": "upsell_naan", "title": "🍞 Naan"},
+            {"id": "upsell_raita", "title": "🥛 Raita"},
+            {"id": "upsell_bread", "title": "🍞 Roti"}
+        ]
+
+    # Burger suggestions
+    if "burger" in name_lower or "sandwich" in name_lower:
+        return [
+            {"id": "upsell_fries", "title": "🍟 Fries"},
+            {"id": "upsell_drink", "title": "🥤 Cold Drink"},
+            {"id": "upsell_sauce", "title": "🌶️ Sauce"}
+        ]
+
+    # Pizza suggestions
+    if "pizza" in name_lower:
+        return [
+            {"id": "upsell_wings", "title": "🍗 Wings"},
+            {"id": "upsell_drink", "title": "🥤 Drink"},
+            {"id": "upsell_dessert", "title": "🍰 Dessert"}
+        ]
+
+    # Default suggestions (don't overuse)
+    return None
+
 async def show_welcome(sender, country_code):
     """Show welcome without extra message"""
     country_info = COUNTRIES[country_code]
@@ -169,8 +208,8 @@ async def handle_smart_flow(sender, text_or_id, is_interactive=False):
     # ========== STAGE 1: ADDRESS INPUT (PRIORITY) ==========
     if session.get("stage") == "address_input" and not is_interactive:
         address = text_or_id.strip()
-        if len(address) < 5:
-            await send_text_message(sender, "❌ Address too short. Please provide complete address.\n\n(e.g., House 123, Street Name, City)")
+        if len(address) < 10:
+            await send_text_message(sender, "❌ Address too short. Please be more specific.\n\n(e.g., House/Flat 123, Street Name, Area, Nearest Place)")
             return
 
         session["address"] = address
@@ -251,8 +290,17 @@ Reply with number (1-10)"""
 
                 emoji = get_item_emoji(item["name"])
                 msg = f"✅ Added 1x {emoji} {item['name']} to cart!"
-                msg += f"\n\n💡 Popular additions:\n• Naan\n• Lassi\n• Dessert"
                 await send_text_message(sender, msg)
+
+                # Show smart suggestions if available
+                suggestions = get_smart_suggestions(item["name"])
+                if suggestions:
+                    await send_interactive_buttons(
+                        sender,
+                        header_text="💡 ADD-ONS",
+                        body_text="Pair with popular additions",
+                        buttons=suggestions
+                    )
 
                 await show_cart_with_total(sender, country_code, session["cart"], menu)
                 found = True
@@ -286,7 +334,13 @@ Reply with number (1-10)"""
             session["delivery_type"] = "home"
             session["stage"] = "address_input"
             customer_sessions[sender] = session
-            await send_text_message(sender, "📍 Please provide your delivery address:\n\n(e.g., House 123, Street Name, City)")
+            msg = """📍 Please provide your delivery address:
+
+(e.g., House/Flat 123, Street Name, Area, Nearest Place)
+
+Example:
+House B-32, Block 4, Gulshan-e-Iqbal, near Mosque"""
+            await send_text_message(sender, msg)
             return
 
         if text_or_id == "delivery_pickup":
