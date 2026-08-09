@@ -87,31 +87,25 @@ async def handle_webhook(request: Request):
 
 # ==================== MESSAGE PROCESSING ====================
 async def process_user_message(phone_number: str, text: str):
-    """Process user message through AI or direct command"""
+    """Process user message through direct menu selection"""
 
     # Get or create user session
     if phone_number not in user_sessions:
         user_sessions[phone_number] = {"service_id": None, "stage": "greeting", "cart": []}
 
     session = user_sessions[phone_number]
+    text_clean = text.strip().lower()
 
-    # If no service selected yet, show service selection
-    if session["service_id"] is None:
-        if text.lower() in ["hi", "hello", "hey", "start"]:
-            # Show service options directly
-            options_msg = "👋 Welcome!\n\n🔍 Choose a service:\n\n1️⃣ 🍔 Restaurant Lead Bot\n2️⃣ 💅 Aesthetic & Dental Lead Bot\n3️⃣ 🏠 Real Estate Lead Bot\n\nReply with number (1-3)"
-            await send_message(phone_number, options_msg)
-        else:
-            # Try AI if not a greeting
-            ai_response = await chat_with_ai(phone_number, text)
-            await send_message(phone_number, ai_response["message"])
+    # Greeting - show service options
+    if text_clean in ["hi", "hello", "hey", "start", "menu"] and session["service_id"] is None:
+        options_msg = "👋 Welcome!\n\n🔍 Choose a service:\n\n1️⃣ 🍔 Restaurant Lead Bot\n2️⃣ 💅 Aesthetic & Dental Lead Bot\n3️⃣ 🏠 Real Estate Lead Bot\n\nReply with number (1-3)"
+        await send_message(phone_number, options_msg)
+        return
 
-            if ai_response.get("service_id"):
-                session["service_id"] = ai_response["service_id"]
-
-    # Handle service selection (1, 2, 3)
-    elif session["service_id"] is None and text.strip() in ["1", "2", "3"]:
+    # Service selection (1, 2, 3)
+    if text.strip() in ["1", "2", "3"] and session["service_id"] is None:
         service_id = int(text.strip())
+
         if service_id == 1:
             session["service_id"] = 1
             session["stage"] = "restaurant_greeting"
@@ -121,15 +115,22 @@ async def process_user_message(phone_number: str, text: str):
             msg += f"\nReply with number (1-{len(menu_data)})"
             await send_message(phone_number, msg)
         else:
-            await send_message(phone_number, "🔄 This service is coming soon! Please check back later.\n\nReply '1' for Restaurant.")
+            await send_message(phone_number, f"🔄 Service {service_id} coming soon!\n\nReply '1' for Restaurant 🍔")
+        return
 
     # If service is restaurant, process order flow
-    elif session["service_id"] == 1:
+    if session["service_id"] == 1:
         await handle_restaurant_flow(phone_number, text, session)
+        return
 
-    # Other services - show coming soon
-    elif session["service_id"] in [2, 3]:
-        await send_message(phone_number, "🔄 This service is coming soon! Please check back later.")
+    # If service 2 or 3 selected
+    if session["service_id"] in [2, 3]:
+        await send_message(phone_number, "🔄 Service coming soon! Type '1' for Restaurant 🍔")
+        return
+
+    # Default - ask to start
+    if session["service_id"] is None:
+        await send_message(phone_number, "👋 Type 'Hi' to start or reply with service number (1-3)")
 
 
 # ==================== RESTAURANT FLOW ====================
