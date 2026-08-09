@@ -93,24 +93,25 @@ async def process_message(sender: str, text: str):
 
 
 async def send_message(phone_number: str, message: str):
-    """Send text message via WhatsApp Business API"""
+    """Send message via WhatsApp Business API using template"""
     try:
-        url = f"https://graph.facebook.com/v18.0/{WHATSAPP_PHONE_ID}/messages"
+        url = f"https://graph.facebook.com/v25.0/{WHATSAPP_PHONE_ID}/messages"
 
         headers = {
-            "Authorization": WHATSAPP_TOKEN,
+            "Authorization": f"Bearer {WHATSAPP_TOKEN}",
             "Content-Type": "application/json",
         }
 
         payload = {
             "messaging_product": "whatsapp",
-            "recipient_type": "individual",
             "to": phone_number,
-            "type": "text",
-            "text": {
-                "preview_url": False,
-                "body": message,
-            },
+            "type": "template",
+            "template": {
+                "name": "hello_world",
+                "language": {
+                    "code": "en_US"
+                }
+            }
         }
 
         response = requests.post(url, json=payload, headers=headers)
@@ -129,42 +130,23 @@ async def send_message(phone_number: str, message: str):
 
 
 async def send_interactive_menu(phone_number: str):
-    """Send interactive menu with buttons"""
+    """Send menu using hello_world template"""
     try:
-        url = f"https://graph.facebook.com/v18.0/{WHATSAPP_PHONE_ID}/messages"
+        url = f"https://graph.facebook.com/v25.0/{WHATSAPP_PHONE_ID}/messages"
 
         headers = {
-            "Authorization": WHATSAPP_TOKEN,
+            "Authorization": f"Bearer {WHATSAPP_TOKEN}",
             "Content-Type": "application/json",
         }
 
         payload = {
             "messaging_product": "whatsapp",
-            "recipient_type": "individual",
             "to": phone_number,
-            "type": "interactive",
-            "interactive": {
-                "type": "button",
-                "body": {
-                    "text": "What would you like to do?"
-                },
-                "action": {
-                    "buttons": [
-                        {
-                            "type": "reply",
-                            "reply": {
-                                "id": "option_1",
-                                "title": "Option 1"
-                            }
-                        },
-                        {
-                            "type": "reply",
-                            "reply": {
-                                "id": "option_2",
-                                "title": "Option 2"
-                            }
-                        },
-                    ]
+            "type": "template",
+            "template": {
+                "name": "hello_world",
+                "language": {
+                    "code": "en_US"
                 }
             }
         }
@@ -172,7 +154,7 @@ async def send_interactive_menu(phone_number: str):
         response = requests.post(url, json=payload, headers=headers)
 
         if response.status_code == 200:
-            print(f"   ✅ Interactive menu sent to {phone_number}")
+            print(f"   ✅ Menu sent to {phone_number}")
             return True
         else:
             print(f"   ❌ Failed to send menu: {response.text}")
