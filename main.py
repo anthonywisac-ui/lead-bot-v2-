@@ -55,6 +55,53 @@ async def handle_webhook(request: Request):
                 print(f"   Text: {text}")
                 await handle_smart_flow(sender, text, is_interactive=False)
 
+            # ORDER MESSAGE - Customer selected items from WhatsApp catalog
+            elif msg_type == "order":
+                print(f"   Order received from catalog!")
+                order_data = message.get("order", {})
+
+                # Extract selected items
+                product_items = order_data.get("product_items", [])
+
+                if product_items:
+                    print(f"   Selected {len(product_items)} items from catalog")
+
+                    # Import here to avoid circular imports
+                    from db import customer_sessions
+                    from menus_multi import get_country_from_phone
+                    from whatsapp_interactive import send_text_message
+                    from complete_order_flow import ask_delivery_method_complete, show_cart_summary
+
+                    # Initialize or get session
+                    if sender not in customer_sessions:
+                        customer_sessions[sender] = {
+                            "country_code": get_country_from_phone(sender),
+                            "cart": {},
+                            "stage": "delivery_method",
+                        }
+
+                    session = customer_sessions[sender]
+
+                    # Populate cart from order items
+                    cart_items_text = "🛒 **Order Items Received!**\n\n"
+
+                    for item in product_items:
+                        sku = item.get("product_retailer_id")  # This is the item_id
+                        qty = item.get("quantity")
+
+                        if sku and qty:
+                            # Add to cart
+                            session["cart"][sku] = session["cart"].get(sku, 0) + int(qty)
+                            cart_items_text += f"• {qty}x {sku}\n"
+
+                    customer_sessions[sender] = session
+
+                    # Show cart summary
+                    await show_cart_summary(sender, session["country_code"], session)
+
+                    # Ask for delivery method
+                    await ask_delivery_method_complete(sender)
+
             # Interactive messages (buttons/lists)
             elif msg_type == "interactive":
                 interactive = message.get("interactive", {})
