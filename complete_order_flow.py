@@ -290,8 +290,28 @@ Order ID: #{order_id}
 
     await send_text_message(MANAGER_NUMBER, manager_msg)
 
+    # ========== SAVE CUSTOMER PROFILE ==========
+    # Save or update customer profile with order info
+    from customer_profile import save_customer_profile, update_customer_last_order
+
+    customer_name = session.get("customer_name", "")
+    if customer_name:
+        save_customer_profile(sender, customer_name, country_code)
+
+    # Update last order info in customer profile
+    cart_items_str = []
+    for item_id, qty in cart.items():
+        for category in menu["categories"].values():
+            if item_id in category["items"]:
+                item = category["items"][item_id]
+                cart_items_str.append(f"{qty}x {item['name']}")
+                break
+
+    update_customer_last_order(sender, order_id, cart_items_str, total)
+
     print(f"✅ Order created: {order_id}")
     print(f"📊 Total: {format_price(country_code, total)}")
     print(f"🎯 Items: {len(cart)}")
+    print(f"👤 Customer: {customer_name if customer_name else 'Anonymous'}")
 
     return True

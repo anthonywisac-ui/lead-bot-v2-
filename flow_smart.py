@@ -529,49 +529,66 @@ async def handle_smart_flow(sender, text_or_id, is_interactive=False):
         session["pending_qty_item"] = None
         customer_sessions[sender] = session
 
-    # ========== SMART DETECTION: Auto-detect customer type & preferences ==========
+    # ========== SMART GREETING: Use customer profile + smart greeting ==========
     if session.get("stage") == "greeting" and not is_interactive:
-        # Use smart detection on first message
-        detection_result = await process_first_message(sender, text_or_id, session)
-
-        customer_type = detection_result["customer_type"]
-        name = detection_result["name"]
-        greeting = detection_result["greeting"]
-        options = detection_result["options"]
-
         # Auto-detect country
         detected_country = session.get("detected_location") or get_country_from_phone(sender)
         session["country_code"] = detected_country
-        session["stage"] = "browsing"
-        session["customer_type"] = customer_type
         customer_sessions[sender] = session
 
-        # Send personalized greeting
-        await send_text_message(sender, greeting)
+        # Use new smart greeting with returning customer detection
+        from whatsapp_native_catalog_handler import smart_greeting
+        await smart_greeting(sender, detected_country, session)
+        customer_sessions[sender] = session
+        return
 
-        # Handle based on customer type
-        if customer_type == "client":
-            # B2B client: ask for manager number
-            session["stage"] = "get_manager_number"
+    # ========== HANDLE: View Catalog / New Order ==========
+    if is_interactive and text_or_id == "view_catalog":
+        # Show native catalog link or fallback menu
+        country_code = session.get("country_code") or get_country_from_phone(sender)
+        session["country_code"] = country_code
+        session["stage"] = "browsing"
+        customer_sessions[sender] = session
+
+        # In production, this would trigger native WhatsApp catalog
+        # For now, show button-based menu as fallback
+        await show_welcome(sender, country_code)
+        return
+
+    # ========== HANDLE: Repeat Last Order ==========
+    if is_interactive and text_or_id == "repeat_last_order":
+        from customer_profile import get_customer_profile
+        from complete_order_flow import show_cart_summary, ask_delivery_method_complete
+
+        profile = get_customer_profile(sender)
+        if profile and "last_order_items" in profile:
+            # Repopulate cart with last order
+            last_items = profile.get("last_order_items", [])
+            country_code = session.get("country_code") or profile.get("country_code")
+            session["country_code"] = country_code
+            session["cart"] = {}
+
+            # Parse and add items back to cart
+            menu = get_menu(country_code)
+            for item_str in last_items:
+                # Format: "emoji item_name - price"
+                # Extract item_id (will need to search)
+                for cat in menu["categories"].values():
+                    for item_id, item in cat["items"].items():
+                        if item["name"] in item_str:
+                            session["cart"][item_id] = session["cart"].get(item_id, 0) + 1
+                            break
+
+            session["stage"] = "delivery_selection"
             customer_sessions[sender] = session
-            await send_text_message(sender, "Please type your manager/business number:")
-            return
 
-        elif customer_type == "returning" and options:
-            # Returning customer: show options with name
-            buttons = options
-            await send_interactive_buttons(
-                sender,
-                header_text=f"👋 HI {(name or 'THERE').upper()}!",
-                body_text="What would you like to do?",
-                buttons=buttons
-            )
-            return
-
+            # Show cart and ask delivery method
+            await show_cart_summary(sender, country_code, session)
+            await ask_delivery_method_complete(sender)
         else:
-            # New customer or returning without last order: show menu
-            await show_welcome(sender, detected_country)
-            return
+            await send_text_message(sender, "❌ No previous order found. Let's start a new one!")
+            await show_welcome(sender, session.get("country_code") or get_country_from_phone(sender))
+        return
 
     # ========== GEMINI FALLBACK: Use AI for ambiguous/complex inputs ==========
     # If message doesn't match any known patterns, try Gemini for intelligent handling
@@ -617,6 +634,34 @@ async def handle_smart_flow(sender, text_or_id, is_interactive=False):
 
     # Old handlers removed - new interactive buttons handle delivery selection
 
+    # ========== STAGE: ASK CUSTOMER NAME ==========
+    if session.get("stage") == "ask_customer_name" and not is_interactive:
+        name = text_or_id.strip()
+        if len(name) < 2:
+            await send_text_message(sender, "❌ Please enter a valid name (at least 2 characters)")
+            return
+
+        session["customer_name"] = name
+        session["stage"] = "delivery_selection"
+        customer_sessions[sender] = session
+
+        await send_text_message(sender, f"✅ Thanks, {name}! Now let's choose delivery.")
+
+        # Continue with delivery selection
+        buttons = [
+            {"id": "delivery_home", "title": "🏠 Delivery"},
+            {"id": "delivery_pickup", "title": "🚗 Pickup"},
+            {"id": "delivery_dine_in", "title": "🍽️ Dine-in"}
+        ]
+
+        await send_interactive_buttons(
+            sender,
+            header_text="DELIVERY METHOD",
+            body_text="How would you like your order?",
+            buttons=buttons
+        )
+        return
+
     # ========== STAGE: ADDRESS INPUT ==========
     if session.get("stage") == "address_input" and not is_interactive:
         address = text_or_id.strip()
@@ -625,6 +670,15 @@ async def handle_smart_flow(sender, text_or_id, is_interactive=False):
             return
 
         session["address"] = address
+        customer_sessions[sender] = session
+
+        # Ask for customer name if not already provided
+        if not session.get("customer_name"):
+            session["stage"] = "ask_customer_name"
+            customer_sessions[sender] = session
+            await send_text_message(sender, "👤 **What's your name?** (So we can greet you next time 😊)")
+            return
+
         session["stage"] = "confirm_order"
         customer_sessions[sender] = session
 
@@ -647,6 +701,15 @@ async def handle_smart_flow(sender, text_or_id, is_interactive=False):
             return
 
         session["table_number"] = table_number
+        customer_sessions[sender] = session
+
+        # Ask for customer name if not already provided
+        if not session.get("customer_name"):
+            session["stage"] = "ask_customer_name"
+            customer_sessions[sender] = session
+            await send_text_message(sender, "👤 **What's your name?** (So we can greet you next time 😊)")
+            return
+
         session["stage"] = "confirm_order"
         customer_sessions[sender] = session
 
@@ -780,6 +843,15 @@ Reply with number (1-10)"""
 
         if text_or_id == "method_pickup":
             session["delivery_type"] = "pickup"
+            customer_sessions[sender] = session
+
+            # Ask for customer name if not already provided
+            if not session.get("customer_name"):
+                session["stage"] = "ask_customer_name"
+                customer_sessions[sender] = session
+                await send_text_message(sender, "👤 **What's your name?** (So we can greet you next time 😊)")
+                return
+
             session["stage"] = "confirm_order"
             customer_sessions[sender] = session
             from complete_order_flow import create_and_send_order
@@ -789,7 +861,7 @@ Reply with number (1-10)"""
             return
 
         if text_or_id == "method_dinein":
-            session["delivery_type"] = "dinein"
+            session["delivery_type"] = "dine_in"
             session["stage"] = "table_input"
             customer_sessions[sender] = session
             await send_text_message(sender, "🍽️ Which table number are you at?")
@@ -1025,7 +1097,7 @@ Your pickup order has been accepted.
 
         if text_or_id == "delivery_dinein":
             session["delivery_type"] = "dinein"
-            session["stage"] = "get_table_number"
+            session["stage"] = "table_input"
             customer_sessions[sender] = session
             await send_text_message(sender, "🪑 Please provide your table number:")
             return

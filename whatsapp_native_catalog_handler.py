@@ -1,46 +1,58 @@
-# WhatsApp Native Catalog Handler
-# Skip the text/button catalog - use WhatsApp's native catalog UI instead!
+# WhatsApp Native Catalog Handler - PRIMARY ORDER FLOW
+# Use WhatsApp's native catalog as main interface
+# Button-based menu is BACKUP ONLY (when catalog fails)
 
-async def show_whatsapp_native_catalog(sender):
+async def show_view_catalog_button(sender, country_code):
     """
-    Send link to WhatsApp's native catalog
-    Customer will see beautiful catalog UI in WhatsApp
-    They select items directly
+    Show greeting + "View Catalog" button as PRIMARY flow.
+
+    This is THE main interface - customers tap to open native catalog.
     """
-    from whatsapp_interactive import send_text_message
+    from whatsapp_interactive import send_text_message, send_interactive_buttons
+    from country_selector import COUNTRIES
 
-    msg = """
-📦 **BROWSE OUR MENU**
+    country_info = COUNTRIES[country_code]
 
-Tap the link below to see our full catalog with all items, prices, and images!
+    msg = f"""
+🎉 **Welcome to Wild Bites!**
 
-You can select multiple items at once! 🛒
+📍 {country_info['name']} | {country_info['currency']}
+
+Tap below to browse our full menu with beautiful photos and prices!
+Select multiple items at once, then checkout.
     """
 
     await send_text_message(sender, msg)
 
-    # Send catalog link button (WhatsApp handles this)
-    # The catalog is already linked to your WhatsApp number in Meta
-    # Just send a simple message with catalog reference
+    # PRIMARY: View Catalog button
+    buttons = [
+        {"id": "view_catalog", "title": "📦 View Catalog"}
+    ]
+
+    await send_interactive_buttons(
+        sender,
+        header_text="WILD BITES MENU",
+        body_text="Start here 👇",
+        buttons=buttons
+    )
 
 
 async def handle_catalog_selection(sender, message, session):
     """
-    When customer sends order from catalog.
+    Process catalog selection from native WhatsApp UI.
 
-    WhatsApp passes the selected product IDs.
-    Example message: "DL1,BR2,KR1" (multiple items)
-    Or single item: "DL1"
+    WhatsApp passes selected product IDs when customer checks out from catalog.
+    Example: "DL1,BR2,KR1" (multiple items) or "DL1" (single)
     """
     from menus_multi import get_menu, get_country_from_phone, format_price
     from whatsapp_interactive import send_text_message, send_interactive_buttons
     from flow_smart import get_item_emoji
+    from customer_profile import save_customer_profile
 
     sender_country = get_country_from_phone(sender)
     menu = get_menu(sender_country)
 
-    # Parse catalog selection
-    # WhatsApp sends product IDs
+    # Parse catalog selection from WhatsApp
     selected_ids = message.strip().split(",")
 
     # Initialize cart
@@ -77,12 +89,12 @@ async def handle_catalog_selection(sender, message, session):
         await send_text_message(sender, "❌ No valid items selected. Please try again!")
         return
 
-    # Show what they ordered
-    msg = "✅ **ORDER SUMMARY**\n\n"
+    # Show cart summary
+    msg = "✅ **CART SUMMARY**\n\n"
     for item in cart_items:
         msg += f"{item}\n"
-    msg += f"\n💰 **Subtotal**: {format_price(sender_country, total)}\n\n"
-    msg += "How would you like to receive your order?"
+    msg += f"\n💰 **Subtotal**: {format_price(sender_country, total)}\n"
+    msg += "\n**How would you like to receive your order?**"
 
     await send_text_message(sender, msg)
 
@@ -90,17 +102,18 @@ async def handle_catalog_selection(sender, message, session):
     buttons = [
         {"id": "delivery_home", "title": "🏠 Delivery"},
         {"id": "delivery_pickup", "title": "🚗 Pickup"},
-        {"id": "delivery_dine_in", "title": "🍽️ Dine-in"}
+        {"id": "delivery_dinein", "title": "🍽️ Dine-in"}
     ]
 
     await send_interactive_buttons(
         sender,
         header_text="DELIVERY METHOD",
-        body_text="Choose how you want your order:",
+        body_text="Select one:",
         buttons=buttons
     )
 
     session["stage"] = "delivery_selection"
+    session["country_code"] = sender_country
 
 
 async def handle_delivery_selection(sender, delivery_type, session, country_code):
@@ -109,53 +122,101 @@ async def handle_delivery_selection(sender, delivery_type, session, country_code
 
     session["delivery_type"] = delivery_type
 
-    if delivery_type == "dine_in":
+    if delivery_type == "delivery_dine_in":
         # Ask for table number
-        msg = "🍽️ **Dine-in Order**\n\nWhich table are you at?"
+        msg = "🍽️ **Dine-in Order**\n\nWhich table are you at? (e.g., Table 5)"
         await send_text_message(sender, msg)
         session["stage"] = "waiting_table_number"
 
-    elif delivery_type == "pickup":
-        # Ask for address confirmation
-        msg = "🚗 **Pickup Order**\n\nWe'll have it ready in 15-20 minutes!\n\nConfirm your phone number to proceed."
+    elif delivery_type == "delivery_pickup":
+        # Pickup confirmation
+        msg = "🚗 **Pickup Order**\n\nWe'll have it ready in 15-20 minutes!\n\nCome pick it up from Wild Bites! 🎉"
         await send_text_message(sender, msg)
         session["stage"] = "confirming_pickup"
 
     else:  # delivery_home
         # Ask for address
-        msg = "🏠 **Home Delivery**\n\nPlease share your delivery address:\n\n📍 Format: House/Flat number, Street, Area, Nearest landmark"
+        msg = "🏠 **Home Delivery**\n\nPlease share your delivery address:\n\n📍 Format: House/Flat #, Street, Area, Landmark"
         await send_text_message(sender, msg)
         session["stage"] = "collecting_address"
 
 
-# ============================================
-# SIMPLE FLOW: Remove custom catalog, use native
-# ============================================
+# ========================================
+# NEW: SMART GREETING WITH RETURNING CUSTOMER LOGIC
+# ========================================
 
-async def greeting_flow(sender, country_code, session):
+async def smart_greeting(sender, country_code, session):
     """
-    Simple greeting that points to WhatsApp catalog
+    Smart greeting that:
+    1. Detects returning customers (within 10 min)
+    2. Greets by name if known
+    3. Shows last order shortcut
+    4. Shows "View Catalog" button for new order
     """
     from whatsapp_interactive import send_text_message, send_interactive_buttons
+    from customer_profile import is_returning_customer, get_customer_name, format_last_order
+    from country_selector import COUNTRIES
 
-    msg = """
+    country_info = COUNTRIES[country_code]
+
+    # Check if returning customer
+    is_returning, profile = is_returning_customer(sender, within_minutes=10)
+
+    if is_returning and profile:
+        # RETURNING CUSTOMER FLOW
+        name = profile.get("name", "Friend")
+        msg = f"""
+👋 **Welcome back, {name}!**
+
+📍 {country_info['name']} | {country_info['currency']}
+
+Ready for your next order?
+        """
+
+        await send_text_message(sender, msg)
+
+        # Show last order if available
+        last_order = format_last_order(profile)
+        if last_order:
+            await send_text_message(sender, last_order)
+
+        # Offer quick options
+        buttons = [
+            {"id": "repeat_last_order", "title": "🔄 Repeat Order"},
+            {"id": "view_catalog", "title": "📦 New Order"}
+        ]
+
+        await send_interactive_buttons(
+            sender,
+            header_text="QUICK OPTIONS",
+            body_text="What would you like?",
+            buttons=buttons
+        )
+
+        session["stage"] = "greeting"
+
+    else:
+        # NEW CUSTOMER OR 10+ MINUTES HAVE PASSED
+        msg = f"""
 🎉 **Welcome to Wild Bites!**
 
-📦 **Browse Full Menu** - Tap the catalog icon above to see all our items with beautiful photos and prices!
+📍 {country_info['name']} | {country_info['currency']}
 
-Select multiple items at once, then tap the button below when you're ready!
-    """
+Let's get you started! Tap below to browse our menu.
+        """
 
-    await send_text_message(sender, msg)
+        await send_text_message(sender, msg)
 
-    # Add button to continue to checkout
-    buttons = [
-        {"id": "ready_to_order", "title": "✅ Ready to Order"}
-    ]
+        # PRIMARY: View Catalog button
+        buttons = [
+            {"id": "view_catalog", "title": "📦 View Catalog"}
+        ]
 
-    await send_interactive_buttons(
-        sender,
-        header_text="NEXT STEP",
-        body_text="When you've selected your items:",
-        buttons=buttons
-    )
+        await send_interactive_buttons(
+            sender,
+            header_text="WILD BITES MENU",
+            body_text="Start here 👇",
+            buttons=buttons
+        )
+
+    session["stage"] = "greeting"
