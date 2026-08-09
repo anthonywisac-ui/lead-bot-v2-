@@ -594,6 +594,63 @@ async def handle_smart_flow(sender, text_or_id, is_interactive=False):
         return
 
 
+    # ========== STAGE: AFTER CATALOG SELECTION ==========
+    # When customer browses catalog and comes back with message, ask delivery method
+    if session.get("stage") == "browsing" and not is_interactive and text_or_id.lower().strip() not in ["new", "hi", "hello"]:
+        # Customer sent message after browsing catalog
+        # Move to delivery method selection
+        from catalog_flow_handler import ask_delivery_method
+        await ask_delivery_method(sender, session, session["country_code"])
+        return
+
+    # ========== STAGE: DELIVERY METHOD SELECTION ==========
+    if session.get("stage") == "delivery_selection" and not is_interactive:
+        delivery_type = text_or_id.lower().strip()
+
+        # Check which delivery method they chose
+        if "delivery" in delivery_type or "home" in delivery_type or "🏠" in delivery_type:
+            session["delivery_type"] = "home"
+            session["stage"] = "address_input"
+            customer_sessions[sender] = session
+            await send_text_message(sender, """
+🏠 **Home Delivery**
+
+Please share your delivery address:
+
+📍 Format: House/Flat number, Street Name, Area, Nearest Landmark
+
+Example: House B-32, Block 4, Gulshan-e-Iqbal, near Mosque
+""")
+            return
+
+        elif "pickup" in delivery_type or "🚗" in delivery_type:
+            session["delivery_type"] = "pickup"
+            session["stage"] = "payment_selection"
+            customer_sessions[sender] = session
+            await send_text_message(sender, """
+✅ **Pickup Order Confirmed!**
+
+Your order will be ready in 15-20 minutes.
+🚗 Come pick it up from Wild Bites!
+
+Thank you! 🙏
+""")
+            return
+
+        elif "dine" in delivery_type or "table" in delivery_type or "🍽️" in delivery_type:
+            session["delivery_type"] = "dine_in"
+            session["stage"] = "get_table_number"
+            customer_sessions[sender] = session
+            await send_text_message(sender, """
+🍽️ **Dine-in Order**
+
+Which table are you at? (e.g., Table 5, Corner Table, etc.)
+""")
+            return
+        else:
+            await send_text_message(sender, "❓ Please choose:\n🏠 Delivery\n🚗 Pickup\n🍽️ Dine-in")
+            return
+
     # ========== STAGE 2: ADDRESS INPUT (PRIORITY) ==========
     if session.get("stage") == "address_input" and not is_interactive:
         address = text_or_id.strip()
