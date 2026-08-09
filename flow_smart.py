@@ -284,8 +284,8 @@ async def show_welcome(sender, country_code):
         sections=sections
     )
 
-async def show_category_items(sender, country_code, category_key):
-    """Show items in category with image"""
+async def show_items_single_mode(sender, country_code, category_key):
+    """Show items one by one - traditional single item mode"""
     from whatsapp_interactive import send_image_with_caption
 
     menu = get_menu(country_code)
@@ -315,9 +315,56 @@ async def show_category_items(sender, country_code, category_key):
 
     await send_interactive_list(
         sender,
-        header_text=f"📍 {category['name']}",
-        body_text="Tap to select",
+        header_text=f"📍 {category['name']} - Single Mode",
+        body_text="Tap each item to add",
         sections=sections
+    )
+
+async def show_category_items(sender, country_code, category_key):
+    """Show items in category with image"""
+    from whatsapp_interactive import send_image_with_caption
+
+    menu = get_menu(country_code)
+
+    if category_key not in menu["categories"]:
+        await send_text_message(sender, "❌ Category not found")
+        return
+
+    category = menu["categories"][category_key]
+    items = category["items"]
+
+    # Send category image if available (clean image, no caption text)
+    image_url = GITHUB_IMAGES.get(category_key)
+    if image_url:
+        await send_image_with_caption(sender, image_url, "")
+
+    # Show mode selection
+    mode_msg = f"""📍 {category['name']}
+
+Choose how to order:
+
+1️⃣ SINGLE ITEM MODE
+   One item at a time (old way)
+   Good for: Browsing, trying items
+
+2️⃣ CATALOG MODE ⚡ FASTER
+   Select multiple items at once!
+   Good for: Bulk orders, groups
+
+Which mode?"""
+
+    await send_text_message(sender, mode_msg)
+
+    buttons = [
+        {"id": f"mode_single_{category_key}", "title": "1️⃣ Single Item"},
+        {"id": f"mode_catalog_{category_key}", "title": "2️⃣ Catalog View"}
+    ]
+
+    await send_interactive_buttons(
+        sender,
+        header_text="SELECT MODE",
+        body_text="How would you like to order?",
+        buttons=buttons
     )
 
 async def show_quantity_and_proceed(sender, item_id, item_name):
@@ -722,6 +769,26 @@ Reply with number (1-10)"""
 
     # ========== INTERACTIVE SELECTIONS ==========
     if is_interactive:
+        # ===== MODE SELECTION =====
+        if text_or_id.startswith("mode_single_"):
+            category_key = text_or_id.replace("mode_single_", "")
+            session["current_category"] = category_key
+            session["browse_mode"] = "single"
+            customer_sessions[sender] = session
+            # Show items in single mode (original flow)
+            await show_items_single_mode(sender, country_code, category_key)
+            return
+
+        if text_or_id.startswith("mode_catalog_"):
+            category_key = text_or_id.replace("mode_catalog_", "")
+            session["current_category"] = category_key
+            session["browse_mode"] = "catalog"
+            customer_sessions[sender] = session
+            # Show catalog mode
+            from catalog_view import show_catalog
+            await show_catalog(sender, country_code, category_key)
+            return
+
         # Category selection
         if text_or_id.startswith("cat_"):
             category_key = text_or_id.replace("cat_", "")
@@ -946,6 +1013,32 @@ Your pickup order has been accepted.
             customer_sessions[sender] = session
             await send_text_message(sender, "🪑 Please provide your table number:")
             return
+
+    # ========== CATALOG MODE INPUT ==========
+    # Handle catalog input format: DL1:2, DL2:1, BR1:3
+    if session.get("browse_mode") == "catalog" and not is_interactive and ":" in text_or_id:
+        from catalog_view import parse_catalog_input, add_catalog_items_to_cart
+
+        category_key = session.get("current_category")
+
+        # Parse input
+        parsed = await parse_catalog_input(sender, text_or_id, country_code, category_key)
+
+        if parsed is None:
+            # Invalid format
+            await send_text_message(sender, """❌ Invalid format!
+
+Format: item_id:quantity, item_id:quantity
+
+Example: DL1:2, DL2:1, BR1:3
+
+Try again! 📝""")
+            return
+
+        # Add to cart and show confirmation
+        await add_catalog_items_to_cart(sender, parsed, session, country_code)
+        customer_sessions[sender] = session
+        return
 
     # ========== CUSTOM QUANTITY INPUT ==========
     if session.get("pending_qty_item") and not is_interactive and text_or_id.strip().isdigit():
