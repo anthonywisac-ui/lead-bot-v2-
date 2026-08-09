@@ -594,6 +594,13 @@ async def handle_smart_flow(sender, text_or_id, is_interactive=False):
         return
 
 
+    # ========== HANDLE READY TO ORDER BUTTON ==========
+    if text_or_id == "ready_to_order" or (is_interactive and text_or_id == "ready_to_order"):
+        # Customer tapped "Ready to Order" button
+        from catalog_flow_handler import ask_delivery_method
+        await ask_delivery_method(sender, session, session["country_code"])
+        return
+
     # ========== STAGE: AFTER CATALOG SELECTION ==========
     # When customer browses catalog and comes back with message, ask delivery method
     if session.get("stage") == "browsing" and not is_interactive and text_or_id.lower().strip() not in ["new", "hi", "hello"]:

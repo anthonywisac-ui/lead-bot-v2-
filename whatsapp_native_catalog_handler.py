@@ -136,17 +136,26 @@ async def greeting_flow(sender, country_code, session):
     """
     Simple greeting that points to WhatsApp catalog
     """
-    from whatsapp_interactive import send_text_message
+    from whatsapp_interactive import send_text_message, send_interactive_buttons
 
     msg = """
 🎉 **Welcome to Wild Bites!**
 
 📦 **Browse Full Menu** - Tap the catalog icon above to see all our items with beautiful photos and prices!
 
-Select multiple items at once, then we'll handle the rest. 😊
+Select multiple items at once, then tap the button below when you're ready!
     """
 
     await send_text_message(sender, msg)
 
-    # The native catalog is shown by WhatsApp automatically
-    # Just make sure it's linked in Meta!
+    # Add button to continue to checkout
+    buttons = [
+        {"id": "ready_to_order", "title": "✅ Ready to Order"}
+    ]
+
+    await send_interactive_buttons(
+        sender,
+        header_text="NEXT STEP",
+        body_text="When you've selected your items:",
+        buttons=buttons
+    )
