@@ -95,36 +95,40 @@ async def process_user_message(phone_number: str, text: str):
 
     session = user_sessions[phone_number]
 
-    # If no service selected yet, use AI routing
+    # If no service selected yet, show service selection
     if session["service_id"] is None:
-        ai_response = await chat_with_ai(phone_number, text)
-
-        # Send AI message
-        await send_message(phone_number, ai_response["message"])
-
-        # If service selected, set it and show menu
-        if ai_response.get("service_id"):
-            session["service_id"] = ai_response["service_id"]
-
-            if ai_response["service_id"] == 1:
-                session["stage"] = "restaurant_greeting"
-                msg = "🍔 Welcome to Restaurant!\n\n👇 Select a category:\n\n"
-                for idx, (cat_id, cat_info) in enumerate(menu_data.items(), 1):
-                    msg += f"{idx}️⃣ {cat_info['name']}\n"
-                msg += f"\nReply with number (1-{len(menu_data)})"
-                await send_message(phone_number, msg)
-
-        # Show options if needed
-        elif ai_response.get("show_options"):
-            options_msg = "Choose a service:\n\n1️⃣ 🍔 Restaurant Lead Bot\n2️⃣ 💅 Aesthetic & Dental Lead Bot\n3️⃣ 🏠 Real Estate Lead Bot\n\nReply with number (1-3)"
+        if text.lower() in ["hi", "hello", "hey", "start"]:
+            # Show service options directly
+            options_msg = "👋 Welcome!\n\n🔍 Choose a service:\n\n1️⃣ 🍔 Restaurant Lead Bot\n2️⃣ 💅 Aesthetic & Dental Lead Bot\n3️⃣ 🏠 Real Estate Lead Bot\n\nReply with number (1-3)"
             await send_message(phone_number, options_msg)
+        else:
+            # Try AI if not a greeting
+            ai_response = await chat_with_ai(phone_number, text)
+            await send_message(phone_number, ai_response["message"])
+
+            if ai_response.get("service_id"):
+                session["service_id"] = ai_response["service_id"]
+
+    # Handle service selection (1, 2, 3)
+    elif session["service_id"] is None and text.strip() in ["1", "2", "3"]:
+        service_id = int(text.strip())
+        if service_id == 1:
+            session["service_id"] = 1
+            session["stage"] = "restaurant_greeting"
+            msg = "🍔 Welcome to Restaurant!\n\n👇 Select a category:\n\n"
+            for idx, (cat_id, cat_info) in enumerate(menu_data.items(), 1):
+                msg += f"{idx}️⃣ {cat_info['name']}\n"
+            msg += f"\nReply with number (1-{len(menu_data)})"
+            await send_message(phone_number, msg)
+        else:
+            await send_message(phone_number, "🔄 This service is coming soon! Please check back later.\n\nReply '1' for Restaurant.")
 
     # If service is restaurant, process order flow
     elif session["service_id"] == 1:
         await handle_restaurant_flow(phone_number, text, session)
 
     # Other services - show coming soon
-    else:
+    elif session["service_id"] in [2, 3]:
         await send_message(phone_number, "🔄 This service is coming soon! Please check back later.")
 
 
