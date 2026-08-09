@@ -8,6 +8,7 @@ from whatsapp_interactive import send_interactive_buttons, send_interactive_list
 from gemini_ai import get_ai_response
 from db import customer_sessions
 from order_manager import create_order, MANAGER_NUMBER, get_customer_last_order, get_order, update_order_status, get_time_elapsed
+from smart_detection import process_first_message, detect_customer_type
 
 DELIVERY_SETTINGS = {
     "PK": {"min_delivery": 500, "min_pickup": 200, "delivery_fee": 150, "free_above": 2000},
@@ -457,105 +458,70 @@ async def handle_smart_flow(sender, text_or_id, is_interactive=False):
     country_code = session.get("country_code")
     menu = get_menu(country_code) if country_code else None
 
-    # ========== SHORTCODE: CLIENT (B2B) ==========
-    if text_or_id.lower() in ["client"] and not is_interactive and session.get("stage") == "greeting":
-        session["customer_type"] = "client"
-        session["stage"] = "get_manager_number"
+    # ========== SMART DETECTION: Auto-detect customer type & preferences ==========
+    if session.get("stage") == "greeting" and not is_interactive:
+        # Use smart detection on first message
+        detection_result = await process_first_message(sender, text_or_id, session)
+
+        customer_type = detection_result["customer_type"]
+        name = detection_result["name"]
+        greeting = detection_result["greeting"]
+        options = detection_result["options"]
+
+        # Auto-detect country
+        detected_country = session.get("detected_location") or get_country_from_phone(sender)
+        session["country_code"] = detected_country
+        session["stage"] = "browsing"
+        session["customer_type"] = customer_type
         customer_sessions[sender] = session
 
-        msg = """👔 BUSINESS CLIENT SETUP
+        # Send personalized greeting
+        await send_text_message(sender, greeting)
 
-Please provide your manager/business number where you'd like to receive orders:
+        # Handle based on customer type
+        if customer_type == "client":
+            # B2B client: ask for manager number
+            session["stage"] = "get_manager_number"
+            customer_sessions[sender] = session
+            await send_text_message(sender, "Please type your manager/business number:")
+            return
 
-Format: +923xxxxxxxxx or 03xxxxxxxxx"""
-        await send_text_message(sender, msg)
-        return
+        elif customer_type == "returning" and options:
+            # Returning customer: show options with name
+            buttons = options
+            await send_interactive_buttons(
+                sender,
+                header_text=f"👋 HI {(name or 'THERE').upper()}!",
+                body_text="What would you like to do?",
+                buttons=buttons
+            )
+            return
+
+        else:
+            # New customer or returning without last order: show menu
+            await show_welcome(sender, detected_country)
+            return
 
     # Handle manager number input for client
     if session.get("stage") == "get_manager_number" and not is_interactive:
         manager_num = text_or_id.strip()
         if len(manager_num) < 10:
-            await send_text_message(sender, "❌ Invalid number. Please provide a valid phone number.\n\nFormat: +923xxxxxxxxx or 03xxxxxxxxx")
+            await send_text_message(sender, "❌ Invalid number. Format: +923xxxxxxxxx or 03xxxxxxxxx")
             return
 
         session["manager_number"] = manager_num
-        session["stage"] = "greeting"
+        session["stage"] = "browsing"
         customer_sessions[sender] = session
 
-        await send_text_message(sender, f"✅ Manager number saved: {manager_num}\n\nNow let's set up your menu! 📋")
+        await send_text_message(sender, f"✅ Manager: {manager_num}\n\n📋 Let's get your order ready!")
 
-        # Auto-detect country
+        # Show menu
         detected = get_country_from_phone(sender)
         session["country_code"] = detected
-        session["stage"] = "browsing"
         customer_sessions[sender] = session
         await show_welcome(sender, detected)
         return
 
-    # ========== SHORTCODE: NEW ==========
-    if text_or_id.lower() in ["new"] and not is_interactive and session.get("stage") == "greeting":
-        session["customer_type"] = "new"
-        session["cart"] = {}
-        customer_sessions[sender] = session
-
-        # Auto-detect country
-        detected = get_country_from_phone(sender)
-        session["country_code"] = detected
-        session["stage"] = "browsing"
-        customer_sessions[sender] = session
-        await show_welcome(sender, detected)
-        return
-
-    # ========== SHORTCODE: HI/HELLO/SALAM (RETURNING CUSTOMER) ==========
-    if text_or_id.lower() in ["hi", "hello", "salam", "assalam", "assalamu alaikum"] and not is_interactive and session.get("stage") == "greeting":
-        session["customer_type"] = "returning"
-        customer_sessions[sender] = session
-
-        # Auto-detect country
-        detected = get_country_from_phone(sender)
-        session["country_code"] = detected
-        customer_sessions[sender] = session
-
-        # Check if returning customer
-        last_order = get_customer_last_order(sender)
-        if last_order:
-            # Show returning customer options
-            session["stage"] = "browsing"
-            customer_sessions[sender] = session
-            await show_returning_customer_options(sender, detected)
-            return
-        else:
-            # New customer using "hi"
-            session["stage"] = "browsing"
-            customer_sessions[sender] = session
-            await show_welcome(sender, detected)
-            return
-
-    # ========== STAGE 1: RETURNING CUSTOMER CHECK (FALLBACK - only if no shortcode matched) ==========
-    if session.get("stage") == "greeting" and not is_interactive and not session.get("phone_collected") and text_or_id.lower() not in ["client", "new", "hi", "hello", "salam", "assalam", "assalamu alaikum", "owner"]:
-        session["phone_collected"] = True
-        session["customer_phone"] = sender
-        customer_sessions[sender] = session
-
-        # Auto-detect country
-        detected = get_country_from_phone(sender)
-        session["country_code"] = detected
-        customer_sessions[sender] = session
-
-        # Check if returning customer
-        last_order = get_customer_last_order(sender)
-        if last_order:
-            # Show returning customer options
-            session["stage"] = "browsing"
-            customer_sessions[sender] = session
-            await show_returning_customer_options(sender, detected)
-            return
-        else:
-            # New customer - show welcome
-            session["stage"] = "browsing"
-            customer_sessions[sender] = session
-            await show_welcome(sender, detected)
-            return
 
     # ========== STAGE 2: ADDRESS INPUT (PRIORITY) ==========
     if session.get("stage") == "address_input" and not is_interactive:
