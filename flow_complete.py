@@ -13,19 +13,29 @@ from whatsapp_interactive import (
 )
 from db import customer_sessions, customer_profiles, save_profile, save_to_sheet
 
-# Image URLs
-IMAGE_URLS = {
-    "welcome": "file:///D:/WILD-AUTOMATIONS/lead-bot/images/Welcome-image.png",
-    "deals": "file:///D:/WILD-AUTOMATIONS/lead-bot/images/deals-image.png",
-    "karhai": "file:///D:/WILD-AUTOMATIONS/lead-bot/images/karhai-image.png",
+# Category emojis
+CATEGORY_EMOJIS = {
+    "deals": "🔥", "biryani": "🍚", "karahi": "🍛", "bbq": "🍖",
+    "fish": "🐟", "sides": "🍟", "drinks": "🥤", "desserts": "🍰",
+    "mains": "🍚", "grills": "🍖", "shawarma": "🌯", "starters": "🥗",
+    "burgers": "🍔", "chicken": "🍗", "pizza": "🍕", "wraps": "🌯",
+    "bread": "🍞", "chinese": "🥢", "poutine": "🍟"
 }
 
-# Deal rules (from old flow)
-DEAL_RULES = {
-    "DL1": {"trigger": "burger", "msg": "Add fries + soda for just {price}!"},
-    "DL2": {"trigger": "pizza", "msg": "Get wings free with this pizza!"},
-    "DL3": {"trigger": "main", "msg": "Complete this meal with naan + drink!"},
+ITEM_EMOJIS = {
+    "biryani": "🍚", "karahi": "🍛", "kebab": "🍖", "chicken": "🍗",
+    "burger": "🍔", "pizza": "🍕", "fish": "🐟", "shake": "🥤",
+    "lassi": "🥛", "naan": "🍞", "salad": "🥗", "fries": "🍟",
+    "cake": "🍰", "dessert": "🍰"
 }
+
+def get_item_emoji(item_name):
+    """Get emoji for item based on name"""
+    name_lower = item_name.lower()
+    for keyword, emoji in ITEM_EMOJIS.items():
+        if keyword in name_lower:
+            return emoji
+    return "🍲"  # Default emoji
 
 async def show_country_shortcodes(sender):
     """Show country selection with shortcodes"""
@@ -55,39 +65,47 @@ def get_country_from_shortcode(code):
     return codes.get(code)
 
 async def show_main_menu(sender, country_code):
-    """Show category menu with buttons"""
+    """Show category menu with LIST (not buttons)"""
     menu = get_menu(country_code)
     categories = list(menu["categories"].items())
 
-    # Show welcome image
-    msg = f"👋 Welcome to Wild Bites!\n🌍 {COUNTRIES[country_code]['name']}\n\n"
-    msg += "🍽️ What would you like to order?"
+    # Show welcome message
+    country_info = COUNTRIES[country_code]
+    msg = f"""👋 Welcome to Wild Bites!
+
+📍 {country_info['name']}
+💱 Currency: {country_info['currency']}
+
+Type 'owner' to change location
+
+🍽️ Choose from menu below:"""
+
     await send_text_message(sender, msg)
 
-    # First 3 categories as buttons
-    buttons = []
-    for key, data in categories[:3]:
-        cat_name = data["name"].split()[1] if len(data["name"].split()) > 1 else data["name"]
-        buttons.append({
+    # Build ONE complete list with ALL categories
+    rows = []
+    for key, data in categories:
+        emoji = CATEGORY_EMOJIS.get(key, "🍲")
+        rows.append({
             "id": f"cat_{key}",
-            "title": data["name"][:20]  # Limit title length
+            "title": data["name"],
+            "description": f"Browse {len(data['items'])} items"
         })
 
-    if buttons:
-        await send_interactive_buttons(
-            sender,
-            header_text="🍽️ SELECT CATEGORY",
-            body_text="Choose what you'd like to eat",
-            buttons=buttons
-        )
+    sections = [{
+        "title": "🍽️ CATEGORIES",
+        "rows": rows
+    }]
 
-    # Show remaining categories as text
-    if len(categories) > 3:
-        remaining = "\n".join([f"{i+4}️⃣ {data['name']}" for i, (key, data) in enumerate(categories[3:])])
-        await send_text_message(sender, f"More options:\n\n{remaining}")
+    await send_interactive_list(
+        sender,
+        header_text="📍 MENU CATEGORIES",
+        body_text="Tap a category to see items",
+        sections=sections
+    )
 
-async def show_category_items(sender, country_code, category_key, page=0):
-    """Show items in category as list"""
+async def show_category_items(sender, country_code, category_key):
+    """Show items in category as ONE complete list"""
     menu = get_menu(country_code)
 
     if category_key not in menu["categories"]:
@@ -98,81 +116,41 @@ async def show_category_items(sender, country_code, category_key, page=0):
     items = category["items"]
     category_name = category["name"]
 
-    # Send category image
-    image_key = "deals" if "deal" in category_key.lower() else "karhai" if "karahi" in category_key.lower() else "welcome"
-    if image_key in IMAGE_URLS:
-        await send_text_message(sender, f"🖼️ Fetching {category_name}...")
-
-    # Build list
+    # Build list with proper emojis
     rows = []
     for item_id, item in items.items():
+        emoji = get_item_emoji(item["name"])
         rows.append({
             "id": item_id,
-            "title": f"{item['emoji']} {item['name']}",
-            "description": f"{format_price(country_code, item['price'])} • {item['desc'][:30]}..."
+            "title": f"{emoji} {item['name']}",
+            "description": f"{format_price(country_code, item['price'])} • {item['desc'][:35]}"
         })
 
-    if rows:
-        sections = [{
-            "title": category_name.upper(),
-            "rows": rows
-        }]
+    sections = [{
+        "title": category_name.upper(),
+        "rows": rows
+    }]
 
-        await send_interactive_list(
-            sender,
-            header_text=f"📍 {category_name}",
-            body_text="Tap to add to cart 🛒",
-            sections=sections
-        )
-
-async def show_item_detail(sender, item_id, country_code, menu):
-    """Show item with quantity selector"""
-    # Find item
-    item_data = None
-    for cat in menu["categories"].values():
-        if item_id in cat["items"]:
-            item_data = cat["items"][item_id]
-            break
-
-    if not item_data:
-        return
-
-    msg = f"""
-{item_data['emoji']} {item_data['name']}
-
-{item_data['desc']}
-
-💰 {format_price(country_code, item_data['price'])}
-
-✅ Added to cart!
-"""
+    # Send category message with image info
+    msg = f"📸 Loading {category_name}...\n\n⬇️ Scroll and tap any item to add to cart"
     await send_text_message(sender, msg)
 
-    # Quantity buttons
-    price = item_data['price']
-    buttons = [
-        {"id": f"add_{item_id}_1", "title": f"1x {format_price(country_code, price)}"},
-        {"id": f"add_{item_id}_2", "title": f"2x {format_price(country_code, price*2)}"},
-        {"id": f"add_{item_id}_3", "title": f"3x {format_price(country_code, price*3)}"}
-    ]
-
-    await send_interactive_buttons(
+    # Send the list
+    await send_interactive_list(
         sender,
-        header_text="📦 How Many?",
-        body_text=f"{item_data['name']}",
-        buttons=buttons
+        header_text=f"📍 {category_name}",
+        body_text="Tap to add to cart 🛒",
+        sections=sections
     )
 
-async def show_cart(sender, country_code, cart):
+async def show_cart(sender, country_code, cart, menu):
     """Show cart with checkout"""
     if not cart:
         await send_text_message(sender, "🛒 Your cart is empty!")
         await show_main_menu(sender, country_code)
         return
 
-    menu = get_menu(country_code)
     currency = menu["symbol"]
-
     cart_text = "🛒 YOUR CART\n\n"
     total = 0
 
@@ -182,7 +160,8 @@ async def show_cart(sender, country_code, cart):
                 item = cat["items"][item_id]
                 subtotal = item["price"] * qty
                 total += subtotal
-                cart_text += f"✅ {item['name']}\n   ×{qty} = {format_price(country_code, subtotal)}\n\n"
+                emoji = get_item_emoji(item["name"])
+                cart_text += f"{emoji} {item['name']}\n   ×{qty} = {format_price(country_code, subtotal)}\n\n"
                 break
 
     cart_text += f"{'='*40}\n"
@@ -264,18 +243,14 @@ async def handle_complete_flow(sender, text_or_id, is_interactive=False):
             await show_main_menu(sender, country)
             return
 
-    # Auto-detect country if not set (ONLY on first greeting, no prompt)
+    # Auto-detect country if not set (NO PROMPT, just show menu)
     if not session.get("country_code"):
         detected = get_country_from_phone(sender)
         session["country_code"] = detected
         session["stage"] = "browsing"
         customer_sessions[sender] = session
 
-        country_info = COUNTRIES.get(detected)
-        msg = f"📍 Detected: {country_info['name']}\n\n"
-        msg += "Type 'owner' to change country\n\n"
-        msg += "🍽️ What would you like to order?"
-        await send_text_message(sender, msg)
+        # Just show menu directly - no extra message
         await show_main_menu(sender, detected)
         return
 
@@ -293,25 +268,27 @@ async def handle_complete_flow(sender, text_or_id, is_interactive=False):
             return
 
         # Item selection from list
-        if text_or_id in menu["categories"].get(session.get("current_category", ""), {}).get("items", {}):
-            item_id = text_or_id
-            qty = 1
-            session["cart"][item_id] = session["cart"].get(item_id, 0) + qty
-            customer_sessions[sender] = session
+        # Check all categories for the item
+        found = False
+        for cat_key, cat_data in menu["categories"].items():
+            if text_or_id in cat_data.get("items", {}):
+                item = cat_data["items"][text_or_id]
+                session["cart"][text_or_id] = session["cart"].get(text_or_id, 0) + 1
+                customer_sessions[sender] = session
 
-            # Show item detail
-            item = menu["categories"][session["current_category"]]["items"][item_id]
-            await send_text_message(sender, f"✅ Added {qty}x {item['name']} to cart!")
+                # Show item added
+                emoji = get_item_emoji(item["name"])
+                await send_text_message(sender, f"✅ Added 1x {emoji} {item['name']} to cart!")
 
-            # Upsell
-            upsell_msg = f"💡 How about adding:\n"
-            upsell_msg += f"• Naan (Rs 180)\n"
-            upsell_msg += f"• Lassi (Rs 350)\n"
-            upsell_msg += f"• Dessert (Rs 250)"
-            await send_text_message(sender, upsell_msg)
+                # Show upsell
+                await send_text_message(sender, "💡 How about adding:\n• Naan\n• Lassi\n• Dessert")
 
-            # Show cart
-            await show_cart(sender, country_code, session["cart"])
+                # Show cart
+                await show_cart(sender, country_code, session["cart"], menu)
+                found = True
+                break
+
+        if found:
             return
 
         # Cart actions
@@ -349,16 +326,18 @@ async def handle_complete_flow(sender, text_or_id, is_interactive=False):
         if text_or_id == "payment_card":
             session["payment"] = "card"
             customer_sessions[sender] = session
+            cart_total = sum(menu["categories"][list(menu["categories"].keys())[0]]["items"].get(item_id, {}).get("price", 0) * qty
+                           for item_id, qty in session["cart"].items()
+                           for cat in menu["categories"].values() if item_id in cat["items"])
+
             msg = f"""
 ✅ ORDER CONFIRMED!
 
 🏪 Wild Bites Restaurant
 📍 {COUNTRIES[country_code]['name']}
 
-💰 Total: {format_price(country_code, sum(menu['categories'][session.get('current_category','')]['items'][item_id]['price'] * qty for item_id, qty in session['cart'].items()))}
-
-🚗 Delivery: {session.get('delivery_type','home')}
-💳 Payment: Card
+🚗 Delivery: Home Delivery
+💳 Payment: Card Payment
 
 Thank you for your order! 🙏
 """
@@ -368,15 +347,14 @@ Thank you for your order! 🙏
         if text_or_id == "payment_cod":
             session["payment"] = "cod"
             customer_sessions[sender] = session
+
             msg = f"""
 ✅ ORDER CONFIRMED!
 
 🏪 Wild Bites Restaurant
 📍 {COUNTRIES[country_code]['name']}
 
-💰 Total: {format_price(country_code, sum(menu['categories'][session.get('current_category','')]['items'][item_id]['price'] * qty for item_id, qty in session['cart'].items()))}
-
-🚗 Delivery: {session.get('delivery_type','home')}
+🚗 Delivery: Pickup
 💵 Payment: Cash on Delivery
 
 Thank you for your order! 🙏
